@@ -1,0 +1,9 @@
+.env
+.env.*
+.data
+node_modules
+test-results
+tests
+docs
+AGENTS.md
+PROMPT-ARRANQUE.md

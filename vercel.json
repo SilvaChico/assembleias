@@ -1,0 +1,20 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "",
+  "installCommand": "npm ci",
+  "outputDirectory": "public",
+  "regions": ["dub1"],
+  "functions": { "api/index.js": { "maxDuration": 30 } },
+  "rewrites": [{ "source": "/api/:path*", "destination": "/api/index?route=:path*" }],
+  "headers": [{
+    "source": "/(.*)",
+    "headers": [
+      {"key":"Content-Security-Policy","value":"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'none'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"},
+      {"key":"Permissions-Policy","value":"geolocation=(), camera=(), microphone=()"},
+      {"key":"Referrer-Policy","value":"no-referrer"},
+      {"key":"X-Content-Type-Options","value":"nosniff"},
+      {"key":"Cache-Control","value":"no-store"}
+    ]
+  }]
+}

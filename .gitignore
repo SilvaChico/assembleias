@@ -1,0 +1,16 @@
+node_modules/
+.DS_Store
+test-results/
+.data/
+.env
+.env.*
+!.env.example
+.vercel/
+*.log
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+playwright-report/
+blob-report/
+*.tgz

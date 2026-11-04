@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" data-i18n-content="propostas_apoios_a_discussao_e">
+  <title data-i18n="assembleias_versao_local"></title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main"><span data-i18n="saltar_para_o_conteudo"></span></a>
+  <div class="demo-banner"><span class="demo-dot" aria-hidden="true"></span><strong id="mode-label"><span data-i18n="versao_local_em_desenvolvimento"></span></strong><span id="mode-detail"><span data-i18n="nao_validada_para_decisoes_reais"></span></span><button type="button" data-action="about"><span data-i18n="funcionamento_e_limites"></span></button></div>
+  <header class="header wrap">
+    <a class="brand" href="#participante" data-i18n-aria-label="assembleias_vista_de_participante"><span class="brand-symbol" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span data-i18n="assembleias"></span><span class="provisional"><span data-i18n="nome_provisorio"></span></span></a>
+    <nav data-i18n-aria-label="vista_da_aplicacao"><a href="#participante" data-view="participant" aria-current="page"><span data-icon="assembly"></span><span data-i18n="participante"></span></a><a href="#mesa" data-view="desk"><span data-icon="chair"></span><span data-i18n="mesa"></span></a></nav>
+  </header>
+  <main id="main" class="wrap" tabindex="-1">
+    <section class="intro" aria-labelledby="page-title">
+      <div><p class="eyebrow" id="assembly-name"><span data-i18n="assembleia_de_lisboa"></span></p><h1 id="page-title"><span data-i18n="o_que_vamos"></span><br><span><span data-i18n="construir_em_conjunto"></span></span></h1><p class="intro-copy"><span data-i18n="uma_proposta_abre_a_conversa"></span><br class="desktop-break"> <span data-i18n="a_assembleia_decide_quando_a"></span></p></div>
+      <aside class="session-ticket" data-i18n-aria-label="selecionar_assembleia"><span class="ticket-top"><span data-i18n="a_praca_e_de_todos"></span></span><div class="ticket-line"></div><label for="assembly-select"><span data-i18n="assembleia"></span></label><select id="assembly-select"><option value="lisboa" data-i18n="lisboa"></option><option value="porto" data-i18n="porto"></option></select><p><span data-i18n="participacao_presencial_dados_e_votacoes"></span></p></aside>
+    </section>
+    <ol class="process" data-i18n-aria-label="percurso_da_assembleia"><li><span class="step-number">01</span><div><strong><span data-i18n="propor"></span></strong><span><span data-i18n="partilhar_uma_ideia"></span></span></div></li><li><span class="step-number">02</span><div><strong><span data-i18n="apoiar_a_discussao"></span></strong><span><span data-i18n="dar_espaco_a_conversa"></span></span></div></li><li><span class="step-number">03</span><div><strong><span data-i18n="votar"></span></strong><span><span data-i18n="decidir_com_a_assembleia"></span></span></div></li></ol>
+    <div id="connection-notice" class="notice" role="status" hidden></div>
+    <div id="desk-notice" class="notice desk-notice" hidden></div>
+    <div class="workspace">
+      <section aria-labelledby="proposals-title" class="proposals-section">
+        <div class="section-heading"><div><p class="eyebrow"><span data-i18n="ideias_para_por_em_comum"></span></p><h2 id="proposals-title"><span data-i18n="propostas"></span> <span id="proposal-count" class="count-pill"></span></h2></div><button class="button primary" type="button" data-action="new"><span data-icon="proposal"></span> <span data-i18n="nova_proposta"></span></button></div>
+        <div class="list-toolbar"><p><span data-i18n="apoiar_e_pedir_discussao"></span> <strong><span data-i18n="nao_e_votar_a_favor"></span></strong></p><div><label for="sort"><span data-i18n="ordenar"></span></label><select id="sort"><option value="arrival" data-i18n="ordem_de_chegada"></option><option value="recent" data-i18n="mais_recentes"></option></select></div></div>
+        <div id="proposals" class="proposal-list"><p><span data-i18n="a_carregar_as_propostas"></span></p></div>
+        <p class="list-footnote"><span data-i18n="todas_as_propostas_sao_visiveis"></span></p>
+      </section>
+      <aside class="voting-column" data-i18n-aria-label="votacao_e_resultados"><div id="voting-panel"></div><section id="latest-result" class="latest-result" hidden></section><div class="privacy-note"><span class="small-cross" aria-hidden="true">+</span><div><strong><span data-i18n="participar_sem_criar_uma_conta"></span></strong><p><span data-i18n="nao_inclua_nomes_contactos_ou"></span></p><button class="text-button" type="button" data-action="about"><span data-i18n="o_que_a_aplicacao_guarda"></span> <span aria-hidden="true">↗</span></button></div></div></aside>
+    </div>
+  </main>
+  <footer class="footer wrap"><span><span data-i18n="assembleias_versao_local_0_2"></span></span><span><span data-i18n="feito_para_apoiar_a_deliberacao"></span></span><button class="text-button" type="button" data-action="about"><span data-i18n="privacidade_e_limites"></span></button></footer>
+  <div id="announcement" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+  <dialog id="modal" aria-labelledby="modal-title"><div id="modal-content"></div></dialog>
+  <noscript><p class="notice">Ative o JavaScript para usar esta aplicação local.</p></noscript>
+</body>
+</html>
