@@ -76,14 +76,21 @@ export async function createApplication({ store, passwords = {}, roomCodes = {},
     const room = await store.getRoom(id).catch(error => { if (error.status === 404) return null; throw error; });
     return room?.code && equal(grant, grantFor(room)) ? room : null;
   };
+  // Shared per-proposal admission, separate from both room access and individual receipts.
+  const voteGrant = vote => createHmac('sha256', sessionSecret).update(`vote-v1:${vote.id}:${vote.code}`).digest('hex');
+  const voteCookie = value => `votacao=${value}; HttpOnly; SameSite=Strict; Path=/api/votes${value ? '' : '; Max-Age=0'}${origin.startsWith('https:') ? '; Secure' : ''}`;
+  const admittedVote = async request => {
+    const value = request.headers.cookie?.split(';').map(value => value.trim()).find(value => value.startsWith('votacao='))?.slice(8);
+    if (!value || !/^[A-Z]{4}\.[a-f0-9]{64}$/.test(value)) return null;
+    const [code, grant] = value.split('.');
+    const vote = await store.resolveVote(code).catch(error => { if (error.status === 401) return null; throw error; });
+    return vote && equal(grant, voteGrant(vote)) ? vote : null;
+  };
   const participantAction = async (room, route, data) => {
-    if (route === '/proposals') return { status: 201, data: await store.submit(room.id, data) };
-    const action = route.match(/^\/proposals\/(\d+)\/(support|vote|vote-status)$/);
+    const action = route.match(/^\/proposals\/(\d+)\/support$/);
     if (!action) throw new AppError(t('acao_nao_encontrada'), 404);
     const id = Number(action[1]);
-    if (action[2] === 'support') await store.support(room.id, id);
-    else if (action[2] === 'vote-status') return { status: 200, data: { recorded: await store.voteRecorded(room.id, id, data.token) } };
-    else return { status: 200, data: { ok: true, ...await store.vote(room.id, id, data.choice, data.token) } };
+    await store.support(room.id, id);
     return { status: 200, data: { ok: true } };
   };
 
@@ -103,6 +110,37 @@ export async function createApplication({ store, passwords = {}, roomCodes = {},
         const content = await readFile(new URL(`./public/${file[0]}`, import.meta.url));
         response.setHeader('Content-Type', file[1]);
         response.writeHead(200).end(request.method === 'HEAD' ? undefined : content); return;
+      }
+      if (pathname.startsWith('/api/votes/')) {
+        const route = pathname.slice('/api/votes'.length);
+        const admitted = await admittedVote(request);
+        if (route === '/session' && request.method === 'GET') {
+          send(response, 200, { ...(admitted ? await store.voteSnapshot(admitted.id) : {}), voteGranted: Boolean(admitted), testMode, hosted: store.remote }); return;
+        }
+        if (request.method !== 'POST') throw new AppError(t('metodo_nao_permitido'), 405);
+        assertOrigin(request);
+        const data = await readJson(request);
+        if (route === '/enter') {
+          let vote;
+          try { vote = await store.resolveVote(data.code); }
+          catch (error) {
+            if (error.status !== 401) throw error;
+            await store.reserveAttempt('votes', 'entry', 30); throw error;
+          }
+          if (admitted?.status === 'open' && admitted.id !== vote.id) throw new AppError(t('vote_stay_focused'), 409);
+          response.setHeader('Set-Cookie', voteCookie(`${vote.code}.${voteGrant(vote)}`));
+          send(response, 200, { granted: true }); return;
+        }
+        if (!admitted) throw new AppError(t('vote_enter_first'), 401);
+        if (route === '/leave') {
+          if (admitted.status !== 'closed') throw new AppError(t('vote_stay_focused'), 409);
+          response.setHeader('Set-Cookie', voteCookie('')); send(response, 200, { granted: false }); return;
+        }
+        const action = route.match(/^\/proposals\/(\d+)\/(vote|vote-status)$/);
+        if (!action || Number(action[1]) !== admitted.id) throw new AppError(t('proposta_nao_encontrada_nesta_assembleia'), 404);
+        if (action[2] === 'vote-status') send(response, 200, { recorded: await store.voteRecorded(admitted.room, admitted.id, data.token) });
+        else send(response, 200, { ok: true, ...await store.vote(admitted.room, admitted.id, data.choice, data.token) });
+        return;
       }
       if (pathname.startsWith('/api/rooms/')) {
         const route = pathname.slice('/api/rooms'.length);
@@ -124,6 +162,7 @@ export async function createApplication({ store, passwords = {}, roomCodes = {},
           send(response, 200, { granted: true, room }); return;
         }
         if (route === '/leave') { response.setHeader('Set-Cookie', roomCookie('')); send(response, 200, { granted: false }); return; }
+        if (route === '/proposals') throw new AppError(t('mesa_only_proposals'), 403);
         const room = await admittedRoom(request);
         if (!room) throw new AppError(t('introduza_o_codigo_de_sala'), 401);
         const result = await participantAction(room, route, data);
