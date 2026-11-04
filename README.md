@@ -72,7 +72,7 @@ Sete testes de dados/API verificam transições, separação entre assembleias, 
 
 `tests/browser.mjs` verifica o percurso completo com Playwright: mesa e participante em contextos separados, submissão e erro acessível, apoio distinto, sincronização, voto simultâneo em separadores, recarregamento, perda da resposta após o registo seguida de refresh/reenvio idempotente, retoma após fecho, contagem presencial reenviada, resultados consistentes, limpeza do estado temporário, isolamento Lisboa/Porto e ausência de pedidos externos do cliente e alvos/tamanhos móveis (320, 375 e 667 px). Foi executado com Chromium disponível neste ambiente, tanto localmente como no endereço de produção com Turso e contextos sem sessão Vercel. Não há ainda auditoria com leitor de ecrã ou avaliação de segurança eleitoral.
 
-O teste de navegador é opcional e requer Playwright no ambiente. `PLAYWRIGHT_MODULE` pode apontar para o módulo instalado e `PLAYWRIGHT_CHROMIUM_EXECUTABLE` para um Chromium existente; depois executar `npm run test:browser`. Não são credenciais da aplicação. As capturas ficam na pasta ignorada `test-results/`.
+O teste de navegador é obrigatório no CI e usa Playwright fixado no lockfile. Localmente, instalar Chromium com `npx --no-install playwright install chromium`. `PLAYWRIGHT_MODULE` pode apontar para o módulo instalado e `PLAYWRIGHT_CHROMIUM_EXECUTABLE` para um Chromium existente; depois executar `npm run test:browser`. Não são credenciais da aplicação. As capturas ficam na pasta ignorada `test-results/`.
 
 ## Produção Vercel e Turso
 
@@ -92,6 +92,6 @@ A aplicação não inclui analytics, rastreadores, session replay ou recursos de
 
 A publicação é feita a partir de uma lista explícita de ficheiros de código, sem `.env`, `.data`, testes ou capturas. O comando `npm ci` e o lockfile reproduzem as dependências; `vercel.json` configura região, API e cabeçalhos. O cliente fala só com a sua própria origem; a ligação Turso ocorre no servidor.
 
-A publicação atual está READY (`dpl_EDUXwjx21eEqLmVUWCN1zQLCiZQw`). A verificação final sem autenticação recebeu HTTP 200, confirmou a execução em Dublin pelos cabeçalhos e encontrou os resultados Turso conservados depois da nova publicação. O repositório local ainda não tem commits nem remote; não houve criação de repositório ou push para GitHub.
+A publicação atual está READY (`dpl_EDUXwjx21eEqLmVUWCN1zQLCiZQw`). A verificação final sem autenticação recebeu HTTP 200, confirmou a execução em Dublin pelos cabeçalhos e encontrou os resultados Turso conservados depois da nova publicação. O código-fonte passou a ser gerido no repositório público `SilvaChico/assembleias`, por branches `codex/`, pull requests e três checks obrigatórios no GitHub Actions. A publicação inicial por envio de ficheiros foi substituída por releases a partir do Git.
 
 O contexto original de brainstorming continua em `docs/brief.md`; as decisões posteriores estão em `docs/decisoes.md`.

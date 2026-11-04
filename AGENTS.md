@@ -1,6 +1,6 @@
 # Orientações do projeto
 
-- Comunicar e escrever a interface em português de Portugal.
+- Communicate, write developer comments and name tests/CI checks in English. Keep the product interface in Portuguese (Portugal), with only that locale shipped.
 - Ler `docs/brief.md` antes de alterar o produto. Distinguir requisitos do utilizador, sugestões de brainstorming e decisões ainda em aberto.
 - O nome `assembleias` é provisório. Não gastar o arranque em branding definitivo.
 - A privacidade dos participantes é um requisito central: não introduzir recolha de nome, e-mail, telefone, documentos, biometria, coordenadas guardadas, perfis persistentes ou históricos individuais de participação.

@@ -47,3 +47,11 @@ Sete testes de dados/API e um percurso Chromium com contextos de participante e 
 Endereço permanente: https://assembleias-silvachicos-projects.vercel.app . Projeto `assembleias`, base e funções em Irlanda. O teste em contexto sem sessão Vercel confirmou consulta, código de sala, submissão e controlo da mesa por palavras-passe diferentes por cidade; não foi preciso um link temporário para participantes. Resultados digitais abertos não saem na API pública. A publicação usa `REVIEW_DATA=1`, com exemplos e resultados fictícios identificados. O fecho não produz uma classificação automática de aprovação/rejeição.
 
 Publicação final READY: `dpl_EDUXwjx21eEqLmVUWCN1zQLCiZQw`. GET anónimo à API devolveu 200, execução `dub1` confirmada nos cabeçalhos e resultados mantidos no Turso após republicação. Sete testes de dados/API passaram, incluindo mais de 30 entradas corretas na sala sem limitar a assembleia por contagens de tentativas erradas. Código-fonte local, ainda sem commits/remote GitHub; envio direto de ficheiros para Vercel.
+
+## Fonte, CI e proteção de main
+
+O utilizador autorizou GitHub como fonte canónica, Vercel ligado ao mesmo repositório e alterações por PR com CI obrigatório. Após a API GitHub recusar proteção no repositório privado no plano atual, o utilizador escolheu explicitamente torná-lo público: https://github.com/SilvaChico/assembleias . A publicação foi revista para excluir valores reais de credenciais, `.env`, bases de dados, logs e artefactos de navegador.
+
+`main` exige PR, branch atualizada e os checks `Static checks`, `Data and API` e `Browser flow`. A proteção aplica-se a administradores, proíbe force push e eliminação, e não exige aprovação humana. Um push de um commit vazio pelo proprietário foi realmente rejeitado com GH006, exigindo PR e os três checks; não continha código da aplicação.
+
+O CI usa Node 22.23.4, Actions fixadas por SHA e Playwright de desenvolvimento fixado em 1.64.1. Corre com bases locais e dados fictícios, sem segredos de produção. Só capturas fictícias de falhas são artefactos. As credenciais Turso foram retiradas do âmbito preview, preservando produção; sem um ambiente de dados isolado adicional, previews servem para rever a interface e a API falha fechada. O fluxo completo é testado no servidor isolado do CI. Não foi criado outro projeto Vercel ou outra base.
