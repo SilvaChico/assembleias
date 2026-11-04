@@ -133,12 +133,13 @@ export async function createApplication({ store, passwords = {}, roomCodes = {},
         }
         if (!admitted) throw new AppError(t('vote_enter_first'), 401);
         if (route === '/leave') {
-          if (admitted.status !== 'closed') throw new AppError(t('vote_stay_focused'), 409);
+          if (admitted.status === 'open') throw new AppError(t('vote_stay_focused'), 409);
           response.setHeader('Set-Cookie', voteCookie('')); send(response, 200, { granted: false }); return;
         }
-        const action = route.match(/^\/proposals\/(\d+)\/(vote|vote-status)$/);
+        const action = route.match(/^\/proposals\/(\d+)\/(vote|vote-status|support)$/);
         if (!action || Number(action[1]) !== admitted.id) throw new AppError(t('proposta_nao_encontrada_nesta_assembleia'), 404);
-        if (action[2] === 'vote-status') send(response, 200, { recorded: await store.voteRecorded(admitted.room, admitted.id, data.token) });
+        if (action[2] === 'support') { await store.support(admitted.room, admitted.id); send(response, 200, { ok: true }); }
+        else if (action[2] === 'vote-status') send(response, 200, { recorded: await store.voteRecorded(admitted.room, admitted.id, data.token) });
         else send(response, 200, { ok: true, ...await store.vote(admitted.room, admitted.id, data.choice, data.token) });
         return;
       }
@@ -180,9 +181,12 @@ export async function createApplication({ store, passwords = {}, roomCodes = {},
         const authenticated = Boolean(session && !session.setupRequired);
         let snapshot = {};
         if (authenticated) {
-          roomId = new URL(request.url, origin).searchParams.get('room') || slug;
-          if ((await store.getRoom(roomId)).assembly !== slug) throw new AppError(t('room_not_found'), 404);
-          snapshot = { ...await store.snapshot(roomId, { admin: true }), rooms: await store.listRooms(slug) };
+          const context = await store.mesaProposals(slug);
+          const requested = new URL(request.url, origin).searchParams.get('proposal');
+          const selected = requested ? context.proposalOptions.find(item => String(item.id) === requested) : context.proposalOptions[0];
+          if (requested && !selected) throw new AppError(t('proposta_nao_encontrada_nesta_assembleia'), 404);
+          const current = selected ? await store.snapshot(await store.proposalRoom(slug, selected.id), { admin: true }) : { proposals: [] };
+          snapshot = { ...context, selectedProposal: selected?.id, proposals: current.proposals.filter(item => item.id === selected?.id) };
         }
         send(response, 200, { authenticated, setupRequired: Boolean(session?.setupRequired), configured: Boolean(await store.getCredential(slug)), testMode, hosted: store.remote, ...snapshot }); return;
       }
@@ -223,11 +227,14 @@ export async function createApplication({ store, passwords = {}, roomCodes = {},
           send(response, 200, { authenticated: true, setupRequired: false }); return;
         }
         if (session.setupRequired) throw new AppError(t('password_setup_required'), 403);
-        if (route === '/admin/rooms') { send(response, 201, { room: await store.createRoom(slug, session) }); return; }
+        if (route === '/admin/proposals') { send(response, 201, await store.submitForAssembly(slug, data, session)); return; }
+        if (route === '/admin/rooms') throw new AppError(t('acao_nao_encontrada'), 404);
         const roomRoute = route.match(/^\/admin\/rooms\/([^/]+)(\/.*)$/);
         if (roomRoute) { roomId = roomRoute[1]; route = `/admin${roomRoute[2]}`; }
+        const directAction = !roomRoute && route.match(/^\/admin\/proposals\/(\d+)\//);
+        if (directAction) roomId = await store.proposalRoom(slug, Number(directAction[1]));
         if ((await store.getRoom(roomId)).assembly !== slug) throw new AppError(t('room_not_found'), 404);
-        if (route === '/admin/proposals') { send(response, 201, await store.submit(roomId, data, session)); return; }
+        if (route === '/admin/proposals') throw new AppError(t('acao_nao_encontrada'), 404);
         const action = route.match(/^\/admin\/proposals\/(\d+)\/(open|counts|close)$/);
         if (!action) throw new AppError(t('acao_nao_encontrada'), 404);
         const id = Number(action[1]);

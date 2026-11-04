@@ -64,7 +64,7 @@ try {
   await participant.keyboard.press('Escape');
   assert.equal(await participant.locator('[data-action=about]').evaluate(element => element === document.activeElement), true);
   await entry(participant, 'A1CD');
-  await participant.getByText('Código de votação incorreto. Usa as quatro letras anunciadas pela mesa.', { exact: true }).waitFor();
+  await participant.getByText('Código de proposta incorreto. Usa as quatro letras anunciadas pela mesa.', { exact: true }).waitFor();
   assert.equal(await participant.locator('#vote-code').evaluate(element => element === document.activeElement), true);
   assert.equal(await participant.locator('#workspace').isVisible(), false);
   await chair.locator('#login-password').fill('fictional-wrong-password'); await chair.locator('#login-password').press('Enter');
@@ -109,9 +109,7 @@ try {
     await chair.locator('#login-password').fill('fictional-updated-chosen-passphrase'); await chair.locator('#login-form button[type=submit]').click();
   }
   await chair.getByText('Ainda não há votação aberta.', { exact: true }).waitFor();
-  await chair.locator('[data-action=create-room]').click();
-  await chair.waitForFunction(() => document.querySelector('#desk-room-select')?.value.startsWith('room-'));
-  const roomId = await chair.locator('#desk-room-select').inputValue(), roomCode = await chair.locator('#room-context strong').innerText();
+  assert.equal(await chair.locator('[data-action=create-room], #desk-room-select').count(), 0, 'Mesa navigation contains proposals only');
   await chair.locator('[data-action=new]').click();
   assert.equal(await chair.locator('[name=category]').count(), 0);
   await chair.locator('#proposal-title').fill('Curto'); await chair.locator('#proposal-form button[type=submit]').click();
@@ -119,19 +117,30 @@ try {
   await chair.keyboard.press('Escape');
   const title = 'Uma oficina aberta de reparação';
   await newProposal(chair, title);
-  // Existing support counts remain visible to the mesa without adding a participant agenda.
-  const proposalId = (await store.snapshot(roomId)).proposals[0].id; await store.support(roomId, proposalId);
+  const proposalId = await chair.locator('#desk-proposal-select').inputValue();
+  const proposalCode = await chair.locator('#room-context strong').innerText();
+  assert.match(proposalCode, /^[A-Z]{4}$/);
+  await entry(participant, proposalCode);
+  await participant.getByRole('heading', { name: title, exact: true }).waitFor();
+  assert.equal(await participant.locator('#vote-form').count(), 0, 'A proposal is readable before its voting period');
+  await participant.getByText('A mesa ainda não abriu a votação.', { exact: true }).waitFor();
+  await participant.locator('[data-action=support]').click();
+  await participant.getByText('Apoio à discussão acrescentado. Não é um voto de aprovação.', { exact: true }).waitFor();
+  await screenshot(participant, 'proposal-before-vote-mobile');
+  await screenshot(chair, 'proposal-created-mesa');
+  assert.doesNotMatch(await participant.locator('body').innerText(), /sala/i);
+  assert.doesNotMatch(await chair.locator('body').innerText(), /sala/i);
   await chair.reload(); await card(chair, title).waitFor();
   await chair.locator('[data-action=new]').click();
   await chair.locator('#proposal-title').fill('Mais sombra para a assembleia');
   await chair.locator('#proposal-description').fill('Montar toldos amovíveis com materiais reutilizados, numa jornada coletiva.');
   await screenshot(chair, 'mesa-proposal-creation'); await chair.keyboard.press('Escape');
-  const code = await open(title);
+  const code = await open(title); assert.equal(code, proposalCode, 'Opening voting keeps the proposal code');
   await screenshot(chair, 'vote-code-mesa');
-  assert.equal((await participant.evaluate(async () => (await fetch('/api/votes/session')).json())).voteGranted, false);
+  assert.equal((await participant.evaluate(async () => (await fetch('/api/votes/session')).json())).voteGranted, true);
   assert.equal(await participant.locator('a[href="/propostas"]').count(), 0);
   assert.equal(await participant.locator('[data-action=new]:visible').count(), 0);
-  await entry(participant, code); await participant.locator('#vote-form').waitFor();
+  await participant.locator('#vote-form').waitFor();
   assert.equal(await participant.locator('.proposals-section:visible, a:visible:not(.skip-link), [data-action=leave-room]:visible').count(), 0, 'An active vote has no in-app proposal switching');
   assert.equal(await participant.locator('#room-context strong').innerText(), code);
   await participant.evaluate(() => document.documentElement.style.fontSize = '200%');
@@ -190,7 +199,7 @@ try {
   await close(); await pausedRoute.continue();
   await participant.getByRole('heading', { name: 'Resultado da contagem', exact: true }).waitFor();
   assert.deepEqual(await participant.locator('tfoot td').allTextContents(), ['0', '0', '0']);
-  const lateStatus = await participant.evaluate(async id => (await fetch(`/api/votes/proposals/${id}/vote`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ choice: 'favor', token: '0'.repeat(64) }) })).status, (await store.snapshot(roomId)).proposals.find(item => item.title === raceTitle).id);
+  const lateStatus = await participant.evaluate(async id => (await fetch(`/api/votes/proposals/${id}/vote`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ choice: 'favor', token: '0'.repeat(64) }) })).status, (await store.mesaProposals('lisboa')).proposalOptions.find(item => item.title === raceTitle).id);
   assert.equal(lateStatus, 409);
   for (const page of [participant]) {
     for (const size of [{ width: 375, height: 812 }, { width: 667, height: 375 }, { width: 320, height: 740 }]) {
@@ -200,13 +209,15 @@ try {
     assert.deepEqual(short, []); assert.doesNotMatch(await page.locator('body').innerText(), /\b(você|Escolha|Escreva|Introduza|Aguarde|Guarde)\b/);
   }
   await chair.getByRole('button', { name: 'Volta às propostas', exact: true }).click();
-  await chair.locator('[data-action=create-room]').click(); await chair.waitForFunction(previous => document.querySelector('#desk-room-select')?.value !== previous, roomId);
-  const secondRoom = await chair.locator('#desk-room-select').inputValue(); assert.notEqual(secondRoom, roomId);
+  await newProposal(chair, 'Mais sombra no espaço da acampada');
+  const secondProposal = await chair.locator('#desk-proposal-select').inputValue(); assert.notEqual(secondProposal, proposalId);
   assert.equal(await chair.getByRole('heading', { name: title, exact: true }).count(), 0);
-  await chair.locator('#desk-room-select').selectOption(roomId); await card(chair, title).waitFor();
-  await chair.locator('#assembly-select').selectOption('porto'); await chair.locator('#login-form').waitFor(); assert.equal(await chair.locator('#desk-room-select').isVisible(), false);
+  await chair.locator('#desk-proposal-select').selectOption(proposalId); await card(chair, title).waitFor();
+  await chair.setViewportSize({ width: 375, height: 812 });
+  assert.equal(await chair.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'Mesa proposal selection fits mobile');
+  await chair.locator('#assembly-select').selectOption('porto'); await chair.locator('#login-form').waitFor(); assert.equal(await chair.locator('#desk-proposal-select').isVisible(), false);
   assert.deepEqual(errors, []); assert.deepEqual(external, []);
-  console.log('Local browser flow passed: password setup/change, mesa-only proposal creation, four-letter entry, focused voting, concurrent tabs, code re-entry, refresh/lost response recovery, close-during-submit, reconnect after closure, final combined totals, room/city boundaries and accessibility.');
+  console.log('Local browser flow passed: password setup/change, mesa-only proposal creation, four-character proposal entry before voting, focused voting, concurrent tabs, code re-entry, refresh/lost response recovery, close-during-submit, reconnect after closure, final combined totals, proposal/city boundaries and accessibility.');
 } catch (error) {
   for (const [i, context] of browser?.contexts().entries() || []) for (const [j, page] of context.pages().entries()) {
     console.error(`Context ${i}, page ${j}:`, await page.evaluate(() => ({ action: document.querySelector('#action-error')?.textContent, connection: document.querySelector('#connection-notice')?.textContent })));

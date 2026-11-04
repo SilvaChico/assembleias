@@ -123,10 +123,10 @@ dialog::backdrop{background:#172a20aa}
 .vote-code-notice p{margin-bottom:4px}
 #announced-vote-code{font-size:2rem;letter-spacing:.18em}
 #vote-code{font-size:1.5rem;letter-spacing:.18em;text-transform:uppercase}
-.room-picker{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px}
-.room-picker label{margin:0}
-.room-picker select{flex:1;min-width:150px;width:auto}
-#room-management{margin-bottom:16px}
+.proposal-picker{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px}
+.proposal-picker label{margin:0}
+.proposal-picker select{flex:1;min-width:150px;width:auto}
+#proposal-management{margin-bottom:16px}
 
 .desk-notice>div{display:flex;flex-wrap:wrap;gap:8px}
 #password-form input{margin-bottom:10px}

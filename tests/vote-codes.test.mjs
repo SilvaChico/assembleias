@@ -27,9 +27,8 @@ test('vote codes reserve collisions globally, never recycle closed codes, and ro
   const first = await open(store), second = await open(store, 'porto');
   assert.equal(first.code, 'ABCD'); assert.equal(second.code, 'EFGH');
   await store.saveCounts('lisboa', first.id, { ...zeros, version: 0 }); await store.closeVoting('lisboa', first.id, { version: 1 });
-  const next = await store.submit('lisboa', proposal);
-  await assert.rejects(store.open('lisboa', next.id), error => error.status === 503);
-  assert.equal((await store.snapshot('lisboa')).proposals.find(item => item.id === next.id).status, 'waiting');
+  await assert.rejects(store.submitForAssembly('lisboa', proposal), error => error.status === 503);
+  assert.equal((await store.mesaProposals('lisboa')).proposalOptions.length, 1, 'Code exhaustion rolls back proposal creation');
   assert.equal((await store.resolveVote(' abcd ')).id, first.id);
   assert.equal((await store.resolveVote('abcd')).status, 'closed');
   await assert.rejects(store.open('lisboa', first.id), error => error.status === 409);
@@ -113,6 +112,7 @@ test('additive vote migration preserves legacy content, counts, active receipts 
   const chair = await first.replace((await first.login()).cookie);
   const closed = await open(first.store); await first.store.saveCounts('lisboa', closed.id, { ...zeros, version: 0 }); await first.store.closeVoting('lisboa', closed.id, { version: 1 });
   const active = await open(first.store), receipt = token(); await first.store.vote('lisboa', active.id, 'against', receipt);
+  const waiting = await first.store.submit('lisboa', proposal);
   const before = await first.store.snapshot('lisboa');
   await first.stop();
   const db = new DatabaseSync(filename);
@@ -122,6 +122,10 @@ test('additive vote migration preserves legacy content, counts, active receipts 
   assert.deepEqual(await restarted.store.snapshot('lisboa'), before);
   assert.equal((await restarted.session(chair.cookie)).data.authenticated, true);
   assert.equal(await restarted.store.voteRecorded('lisboa', active.id, receipt), true);
+  for (const item of (await restarted.store.snapshot('lisboa', { admin: true })).proposals) {
+    assert.equal((await restarted.store.resolveVote(item.voteCode)).id, item.id);
+  }
+  assert.equal((await restarted.store.voteSnapshot(waiting.id)).proposals[0].status, 'waiting');
   const newCode = (await restarted.store.snapshot('lisboa', { admin: true })).proposals.find(item => item.id === active.id).voteCode;
   const admitted = await enter(restarted.request, newCode);
   assert.equal((await vote(restarted.request, active.id, admitted.cookie, receipt)).data.alreadyRecorded, true);
@@ -145,7 +149,7 @@ test('only a current authorized mesa creates proposals in its own city and room'
     assert.equal((await app.request('/api/assemblies/lisboa/admin/proposals', { cookie, body: proposal })).status, 401);
     assert.equal((await app.request('/api/assemblies/lisboa/proposals', { cookie, body: proposal })).status, 404);
   }
-  const allowed = await app.request('/api/assemblies/lisboa/admin/rooms/lisboa/proposals', { cookie: ready.cookie, body: proposal });
+  const allowed = await app.request('/api/assemblies/lisboa/admin/proposals', { cookie: ready.cookie, body: proposal });
   assert.equal(allowed.status, 201);
   const portoRoom = await app.store.createRoom('porto');
   assert.equal((await app.request(`/api/assemblies/lisboa/admin/rooms/${portoRoom.id}/proposals`, { cookie: ready.cookie, body: proposal })).status, 404);
@@ -158,12 +162,9 @@ test('only a current authorized mesa creates proposals in its own city and room'
 
 test('independent server instances serialize colliding code allocations and duplicate receipt submissions', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'assembleias-vote-workers-')), filename = join(directory, 'state.sqlite');
-  const setup = await createStore(filename), otherRoom = await setup.createRoom('porto');
-  const first = (await setup.submit('lisboa', proposal)).id, second = (await setup.submit(otherRoom.id, proposal)).id;
-  await setup.close();
   const workers = [
-    new Worker(new URL('./helpers/vote-worker.mjs', import.meta.url), { workerData: { filename, room: 'lisboa', proposal: first } }),
-    new Worker(new URL('./helpers/vote-worker.mjs', import.meta.url), { workerData: { filename, room: otherRoom.id, proposal: second } }),
+    new Worker(new URL('./helpers/vote-worker.mjs', import.meta.url), { workerData: { filename, city: 'lisboa' } }),
+    new Worker(new URL('./helpers/vote-worker.mjs', import.meta.url), { workerData: { filename, city: 'porto' } }),
   ];
   t.after(async () => { await Promise.all(workers.map(async worker => { const stopped = once(worker, 'exit'); worker.postMessage('stop'); await stopped; })); await rm(directory, { recursive: true, force: true }); });
   const ports = await Promise.all(workers.map(async worker => (await once(worker, 'message'))[0]));
@@ -176,4 +177,49 @@ test('independent server instances serialize colliding code allocations and dupl
   const results = await Promise.all(Array.from({ length: 20 }, (_, index) => vote(index % 2 ? a.request : b.request, id, firstEntry.cookie, receipt)));
   assert.ok(results.every(result => result.status === 200));
   assert.equal(results.filter(result => !result.data.alreadyRecorded).length, 1);
+});
+
+test('creating a proposal atomically assigns its code and entry shows the text before voting opens', async t => {
+  const app = await start(t);
+  const chair = await app.replace((await app.login()).cookie);
+  const create = body => app.request('/api/assemblies/lisboa/admin/proposals', { cookie: chair.cookie, body });
+  const before = await app.store.mesaProposals('lisboa');
+  assert.equal((await create({ ...proposal, title: 'short' })).status, 400);
+  assert.deepEqual(await app.store.mesaProposals('lisboa'), before, 'Validation cannot create an empty proposal or allocate a code');
+  const first = await create(proposal), second = await create({ ...proposal, title: 'Outra proposta independente' });
+  assert.equal(first.status, 201); assert.equal(second.status, 201);
+  assert.match(first.data.voteCode, /^[A-Z]{4}$/); assert.notEqual(first.data.voteCode, second.data.voteCode);
+  const admitted = await enter(app.request, first.data.voteCode.toLowerCase());
+  const state = (await app.request('/api/votes/session', { cookie: admitted.cookie })).data;
+  assert.deepEqual(state.proposals.map(item => item.id), [first.data.id]);
+  assert.equal(state.proposals[0].title, proposal.title); assert.equal(state.proposals[0].description, proposal.description);
+  assert.equal(state.proposals[0].status, 'waiting'); assert.equal(state.proposals[0].digital, undefined);
+  assert.equal((await vote(app.request, first.data.id, admitted.cookie)).status, 409);
+  assert.equal((await app.request(`/api/votes/proposals/${first.data.id}/support`, { cookie: admitted.cookie, body: {} })).status, 200);
+  assert.equal((await app.request('/api/votes/session', { cookie: admitted.cookie })).data.proposals[0].supports, 1);
+  assert.equal((await app.request(`/api/votes/proposals/${second.data.id}/support`, { cookie: admitted.cookie, body: {} })).status, 404);
+  assert.equal((await app.request('/api/votes/leave', { cookie: admitted.cookie, body: {} })).status, 200);
+  const openResponse = await app.request(`/api/assemblies/lisboa/admin/proposals/${first.data.id}/open`, { cookie: chair.cookie, body: {} });
+  assert.equal(openResponse.status, 200);
+  assert.equal((await app.request('/api/votes/session', { cookie: admitted.cookie })).data.voteCode, first.data.voteCode, 'Opening retains the code given at creation');
+  assert.equal((await vote(app.request, first.data.id, admitted.cookie)).status, 200);
+});
+
+test('demonstration proposals each have a usable stable code before voting', async t => {
+  const store = await createStore(); t.after(() => store.close());
+  await store.seedDemo();
+  const codes = [];
+  for (const city of ['lisboa', 'porto']) {
+    const context = await store.mesaProposals(city);
+    assert.equal(context.proposalOptions.length, 3);
+    for (const option of context.proposalOptions) {
+      codes.push(option.code);
+      const resolved = await store.resolveVote(option.code);
+      assert.equal(resolved.id, option.id); assert.equal(resolved.status, 'waiting');
+      assert.equal((await store.voteSnapshot(option.id)).proposals.length, 1);
+    }
+  }
+  assert.equal(new Set(codes).size, 6);
+  await store.seedDemo();
+  assert.deepEqual((await store.mesaProposals('lisboa')).proposalOptions.map(item => item.code), codes.slice(0, 3));
 });

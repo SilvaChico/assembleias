@@ -9,7 +9,8 @@ const modal = $('#modal');
 let slug = new URLSearchParams(location.search).get('assembleia') === 'porto' ? 'porto' : 'lisboa';
 const view = /^\/mesa\/?$/.test(location.pathname) ? 'desk' : 'participant';
 if (location.hash === '#mesa') location.replace(`/mesa${location.search}`);
-let roomId = view === 'desk' ? new URLSearchParams(location.search).get('sala') : null;
+let roomId = null;
+let selectedProposalId = view === 'desk' ? new URLSearchParams(location.search).get('proposta') : null;
 if (view !== 'desk') $('.assembly-picker').remove();
 let state = { assembly: { name: t('assembleia_de_lisboa'), revision: -1 }, proposals: [], testMode: false };
 let admin = { authenticated: false, configured: false };
@@ -47,8 +48,7 @@ async function api(route = '', { method = 'GET', body, admin: needsAdmin = false
   let response;
   let path;
   if (view === 'desk' || needsAdmin) {
-    const scoped = route.startsWith('/admin/proposals') ? route.replace('/admin/proposals', `/admin/rooms/${roomId}/proposals`) : route;
-    path = `/api/assemblies/${city}${scoped}`;
+    path = `/api/assemblies/${city}${route}`;
   } else path = `/api/votes${route || '/session'}`;
   try { response = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), credentials: 'same-origin', signal: AbortSignal.timeout(10000) }); }
   catch { throw new Error(method === 'POST' ? t('a_confirmacao_nao_chegou_nao') : t('ligacao_ao_servidor_interrompida_os')); }
@@ -96,12 +96,13 @@ async function refresh(force = false) {
   const currentEpoch = epoch;
   try {
     const incoming = view === 'desk'
-      ? await api(`/admin/session${roomId ? `?room=${encodeURIComponent(roomId)}` : ''}`, { admin: true })
+      ? await api(`/admin/session${selectedProposalId ? `?proposal=${encodeURIComponent(selectedProposalId)}` : ''}`, { admin: true })
       : await api();
     if (currentEpoch !== epoch) return;
     const nextAdmin = view === 'desk' ? incoming : admin;
     const nextRoom = incoming.room?.id || null;
-    const contextChanged = nextRoom !== roomId;
+    const nextProposal = incoming.selectedProposal ? String(incoming.selectedProposal) : null;
+    const contextChanged = view === 'desk' ? nextProposal !== selectedProposalId : nextRoom !== roomId;
     if (!contextChanged && incoming.assembly && incoming.assembly.revision < state.assembly.revision) return;
     const changed = force || loading || pendingRender || contextChanged || incoming.voteGranted !== state.voteGranted ||
       incoming.assembly?.revision !== state.assembly.revision || nextAdmin.authenticated !== admin.authenticated || nextAdmin.setupRequired !== admin.setupRequired;
@@ -109,7 +110,7 @@ async function refresh(force = false) {
     const previousStatus = state.proposals[0]?.status, previousSentVoteId = sentVoteId;
     pendingRender = true;
     state = { ...incoming, proposals: incoming.proposals || [], assembly: incoming.assembly || { revision: -1 } };
-    admin = nextAdmin; roomId = nextRoom; loading = false;
+    admin = nextAdmin; roomId = nextRoom; if (view === 'desk') selectedProposalId = nextProposal; loading = false;
     if (contextChanged) { panelKey = ''; dirtyCounts = false; sentVoteId = null; if (modal.open) modal.close(); }
     cleanVoteRecords();
     if (view === 'participant' && active()) {
@@ -148,27 +149,29 @@ function render(force = false) {
   $('#access-panel').hidden = !locked;
   $('#desk-notice').hidden = !isDesk();
   $('#desk-notice').innerHTML = isDesk() ? `<strong>${t('mesa_de')} ${slug === 'lisboa' ? t('lisboa') : t('porto')}</strong><div><button class="text-button" type="button" data-action="change-password">${t('password_change_title')}</button><button class="text-button" type="button" data-action="logout">${t('terminar_sessao')}</button></div>` : '';
-  $('#room-context').hidden = locked;
-  $('#room-context').innerHTML = locked ? '' : view === 'participant' ? `<p>${escape(state.assembly.name)} · ${t('vote_code_label')} <strong>${escape(state.voteCode)}</strong></p>` : `<p>${escape(state.assembly.name)} · ${t('room_label')} <strong>${escape(state.room.code)}</strong></p>`;
-  $('#room-management').hidden = !isDesk();
-  const roomOptions = (state.rooms || []).map(room => `<option value="${escape(room.id)}" ${room.id === roomId ? 'selected' : ''}>${room.id === room.assembly ? `${t('legacy_room')} · ` : ''}${escape(room.code)}</option>`).join('');
-  const roomManagementKey = `${slug}:${roomId}:${roomOptions}`;
-  if (isDesk() && $('#room-management').dataset.key !== roomManagementKey) {
-    $('#room-management').dataset.key = roomManagementKey;
-    $('#room-management').innerHTML = `<div class="room-picker"><label for="desk-room-select">${t('room_label')}</label><select id="desk-room-select">${roomOptions}</select><button class="text-button" type="button" data-action="create-room">${t('create_room')}</button></div><p class="field-hint">${t('share_room_code')}</p>`;
+  const code = view === 'participant' ? state.voteCode : state.proposals[0]?.voteCode;
+  $('#room-context').hidden = locked || !code;
+  $('#room-context').innerHTML = locked || !code ? '' : `<p>${escape(state.assembly.name)} · ${t('vote_code_label')} <strong>${escape(code)}</strong></p>`;
+  $('#proposal-management').hidden = !isDesk();
+  const options = (state.proposalOptions || []).map(proposal => `<option value="${proposal.id}" ${String(proposal.id) === selectedProposalId ? 'selected' : ''}>${escape(proposal.code)} · ${escape(proposal.title)}</option>`).join('');
+  const managementKey = `${slug}:${selectedProposalId}:${options}`;
+  if (isDesk() && $('#proposal-management').dataset.key !== managementKey) {
+    $('#proposal-management').dataset.key = managementKey;
+    $('#proposal-management').innerHTML = `<div class="proposal-picker"><label for="desk-proposal-select">${t('proposta')}</label><select id="desk-proposal-select" ${options ? '' : 'disabled'}>${options}</select><button class="text-button" type="button" data-action="new">${t('nova_proposta')}</button></div><p class="field-hint">${t('share_proposal_code')}</p>`;
   }
   const nextAccessKey = `${view}:${slug}:${admin.configured}:${admin.setupRequired}:${locked}`;
   if (nextAccessKey !== accessKey) {
     accessKey = nextAccessKey;
     $('#access-panel').innerHTML = locked ? (view === 'desk' ? (admin.setupRequired ? passwordForm(true) : loginForm()) : voteEntryForm()) : '';
   }
-  $('.proposals-section').hidden = view === 'participant';
+  $('.proposals-section').hidden = view === 'participant' || Boolean(active());
+  $('#proposal-count').hidden = true;
   const proposals = state.proposals.filter(proposal => proposal.status !== 'open').sort((a, b) => a.id - b.id);
   $('#proposal-count').textContent = proposals.length;
-  $('#proposals-label').textContent = active() ? t('outras_propostas') : t('propostas');
+  $('#proposals-label').textContent = t('proposta');
   $('#proposals').innerHTML = locked ? '' : proposals.length ? proposals.map(proposal => `<article class="proposal-card" aria-labelledby="proposal-${proposal.id}"><div class="card-top"><span class="proposal-number">#${proposal.id}</span><span class="status ${proposal.status}">${statusText[proposal.status]}</span></div><div class="proposal-body"><h3 id="proposal-${proposal.id}">${escape(proposal.title)}</h3><p>${escape(proposal.description)}</p></div><div class="card-footer"><span class="support-count"><strong>${number(proposal.supports)}</strong> ${proposal.supports === 1 ? t('apoio_a_discussao') : t('apoios_a_discussao')}</span>${cardAction(proposal)}</div></article>`).join('') : active() ? '' : `<p class="notice">${t('esta_assembleia_ainda_nao_tem')}</p>`;
   const proposal = view === 'participant' ? state.proposals[0] : active();
-  const nextKey = `${view}:${slug}:${roomId}:${locked}:${proposal?.id}:${proposal?.status}:${sentVoteId}:${state.testMode}:${proposal?.countVersion}`;
+  const nextKey = `${view}:${slug}:${roomId}:${selectedProposalId}:${locked}:${proposal?.id}:${proposal?.status}:${proposal?.supports}:${sentVoteId}:${state.testMode}:${proposal?.countVersion}`;
   if (force || (nextKey !== panelKey && !(dirtyCounts && proposal?.id === Number($('#count-form')?.dataset.id) && isDesk()))) {
     panelKey = nextKey; dirtyCounts = false;
     if (locked) $('#voting-panel').replaceChildren(); else renderVotingPanel();
@@ -190,10 +193,15 @@ function passwordForm(setup = false) {
 }
 function renderVotingPanel() {
   const proposal = view === 'participant' ? state.proposals[0] : active();
+  if (view === 'participant' && proposal?.status === 'waiting') {
+    $('#voting-panel').innerHTML = `<div class="voting-panel"><p class="eyebrow">${t('por_discutir')}</p><h2 id="voting-title" tabindex="-1">${escape(proposal.title)}</h2><p class="voting-description">${escape(proposal.description)}</p><p>${t('proposal_waiting')}</p><p class="support-count">${number(proposal.supports)} ${proposal.supports === 1 ? t('apoio_a_discussao') : t('apoios_a_discussao')}</p><button class="button" type="button" data-action="support" data-id="${proposal.id}">${t('apoiar_discussao')}</button><p class="field-hint">${t('apoiar_e_pedir_discussao')}</p><button class="text-button" type="button" data-action="leave-vote">${t('vote_back_start')}</button></div>`;
+    return;
+  }
   if (view === 'participant' && proposal?.status === 'closed') {
     $('#voting-panel').innerHTML = `<div class="voting-panel"><h2 id="voting-title" tabindex="-1">${t('vote_closed_heading')}</h2>${resultContent(proposal)}<button class="button primary" type="button" data-action="leave-vote">${t('vote_back_start')}</button></div>`;
     return;
   }
+  if (!proposal && state.proposals.length) { $('#voting-panel').replaceChildren(); return; }
   if (!proposal) {
     $('#voting-panel').innerHTML = `<div class="voting-panel empty-vote"><h2 id="voting-title" tabindex="-1">${t('nao_ha_uma_votacao_aberta')}</h2></div>`;
     return;
@@ -210,7 +218,7 @@ function deskVote(proposal) {
 }
 function showNewProposal() {
   if (!isDesk()) return;
-  openModal(`<p class="eyebrow">${t('uma_ideia_para')} ${t('room_label')} ${escape(state.room?.code || '')}</p><h2 id="modal-title">${t('nova_proposta')}</h2><p class="modal-intro">${t('escreva_o_que_propoe_e')}</p><form id="proposal-form" novalidate><label for="proposal-title">${t('titulo')} <span>${t('obrigatorio')}</span></label><input id="proposal-title" name="title" minlength="8" maxlength="120" required aria-describedby="title-hint proposal-error"><p class="field-hint" id="title-hint">${t('de_8_a_120_caracteres')}</p><label for="proposal-description">${t('descricao')} <span>${t('obrigatoria')}</span></label><textarea id="proposal-description" name="description" rows="4" minlength="20" maxlength="1200" required aria-describedby="description-hint proposal-error"></textarea><p class="field-hint" id="description-hint">${t('de_20_a_1200_caracteres')}</p><p id="proposal-error" class="form-error" role="alert"></p><div class="modal-actions"><button class="button" type="button" data-action="dismiss">${t('cancelar')}</button><button class="button primary" type="submit">${t('submeter_proposta')}</button></div></form>`);
+  openModal(`<p class="eyebrow">${escape(state.assembly.name)}</p><h2 id="modal-title">${t('nova_proposta')}</h2><p class="modal-intro">${t('escreva_o_que_propoe_e')}</p><form id="proposal-form" novalidate><label for="proposal-title">${t('titulo')} <span>${t('obrigatorio')}</span></label><input id="proposal-title" name="title" minlength="8" maxlength="120" required aria-describedby="title-hint proposal-error"><p class="field-hint" id="title-hint">${t('de_8_a_120_caracteres')}</p><label for="proposal-description">${t('descricao')} <span>${t('obrigatoria')}</span></label><textarea id="proposal-description" name="description" rows="4" minlength="20" maxlength="1200" required aria-describedby="description-hint proposal-error"></textarea><p class="field-hint" id="description-hint">${t('de_20_a_1200_caracteres')}</p><p id="proposal-error" class="form-error" role="alert"></p><div class="modal-actions"><button class="button" type="button" data-action="dismiss">${t('cancelar')}</button><button class="button primary" type="submit">${t('submeter_proposta')}</button></div></form>`);
 }
 function resultContent(proposal) {
   const digital = countTotal(proposal.digital), inPerson = countTotal(proposal.inPerson);
@@ -231,18 +239,17 @@ document.addEventListener('click', async event => {
   const { action, id } = button.dataset;
   try {
     if (action === 'dismiss') modal.close();
-    if (action === 'new') showNewProposal();
+    if (action === 'new') { if (dirtyCounts && !confirm(t('switch_proposal_discard_counts'))) return; showNewProposal(); }
     if (action === 'change-password') { openModal(passwordForm().replace('id="password-title"', 'id="modal-title"')); $('#current-password').focus(); }
     if (action === 'about') showAbout();
     if (action === 'result') showResult(id);
     if (action === 'leave-vote') {
       inFlight = true; await post('/leave'); epoch++; await refresh(true); $('#vote-code')?.focus();
     }
-    if (action === 'create-room') {
-      if (dirtyCounts && !confirm(t('switch_room_discard_counts'))) return;
-      inFlight = true;
-      const result = await post('/admin/rooms', {}, true);
-      roomId = result.room.id; await changeContext(); announce(t('room_created'));
+    if (action === 'support') {
+      inFlight = true; button.disabled = true;
+      await post(`/proposals/${id}/support`); await refresh(true);
+      $('#voting-title')?.focus(); announce(t('apoio_a_discussao_acrescentado_nao'));
     }
     if (action === 'reload-counts') { if (dirtyCounts && !confirm(t('descartar_as_alteracoes_por_guardar'))) return; dirtyCounts = false; await refresh(true); }
     if (action === 'logout') { inFlight = true; await post('/admin/logout', {}, true); admin.authenticated = false; await refresh(true); $('#login-password')?.focus(); announce(t('sessao_da_mesa_terminada')); }
@@ -315,7 +322,7 @@ document.addEventListener('submit', async event => {
     }
     if (form.id === 'proposal-form') {
       const result = await post('/admin/proposals', data, true);
-      modal.close(); await refresh(); const heading = document.getElementById(`proposal-${result.id}`); heading?.setAttribute('tabindex', '-1'); heading?.focus(); announce(t('proposta_submetida_ja_pode_receber'));
+      modal.close(); selectedProposalId = String(result.id); await changeContext(); const heading = document.getElementById(`proposal-${result.id}`); heading?.setAttribute('tabindex', '-1'); heading?.focus(); announce(t('proposta_submetida_ja_pode_receber'));
     }
     if (form.id === 'vote-form') {
       const votingId = Number(form.dataset.id), votingEpoch = epoch;
@@ -341,7 +348,8 @@ document.addEventListener('input', event => { if (event.target.closest('#count-f
 async function changeContext() {
   if (view === 'desk') {
     const url = new URL(location.href);
-    if (roomId) url.searchParams.set('sala', roomId); else url.searchParams.delete('sala');
+    url.searchParams.delete('sala');
+    if (selectedProposalId) url.searchParams.set('proposta', selectedProposalId); else url.searchParams.delete('proposta');
     history.replaceState(null, '', url);
   }
   epoch++; panelKey = ''; dirtyCounts = false; sentVoteId = null; loading = true;
@@ -350,12 +358,12 @@ async function changeContext() {
 }
 $('#assembly-select')?.addEventListener('change', async event => {
   if (dirtyCounts && !confirm(t('mudar_de_assembleia_e_descartar'))) { event.target.value = slug; return; }
-  slug = event.target.value; roomId = null; const url = new URL(location.href); url.searchParams.set('assembleia', slug); url.searchParams.delete('sala'); history.replaceState(null, '', url); await changeContext();
+  slug = event.target.value; roomId = null; selectedProposalId = null; const url = new URL(location.href); url.searchParams.set('assembleia', slug); url.searchParams.delete('sala'); url.searchParams.delete('proposta'); history.replaceState(null, '', url); await changeContext();
 });
 document.addEventListener('change', async event => {
-  if (event.target.id !== 'desk-room-select') return;
-  if (dirtyCounts && !confirm(t('switch_room_discard_counts'))) { event.target.value = roomId; return; }
-  roomId = event.target.value; await changeContext();
+  if (event.target.id !== 'desk-proposal-select') return;
+  if (dirtyCounts && !confirm(t('switch_proposal_discard_counts'))) { event.target.value = selectedProposalId; return; }
+  selectedProposalId = event.target.value; await changeContext();
 });
 window.addEventListener('beforeunload', event => { if (dirtyCounts) { event.preventDefault(); event.returnValue = ''; } });
 window.addEventListener('storage', event => { if (event.key?.startsWith(`assembleias-voto-${roomId}-`)) { if (active() && readVoteRecord(active().id)?.sent) sentVoteId = active().id; render(); } });
