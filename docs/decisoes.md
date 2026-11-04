@@ -46,7 +46,7 @@ Sete testes de dados/API e um percurso Chromium com contextos de participante e 
 
 Endereço permanente: https://assembleias-silvachicos-projects.vercel.app . Projeto `assembleias`, base e funções em Irlanda. O teste em contexto sem sessão Vercel confirmou consulta, código de sala, submissão e controlo da mesa por palavras-passe diferentes por cidade; não foi preciso um link temporário para participantes. Resultados digitais abertos não saem na API pública. A publicação usa `REVIEW_DATA=1`, com exemplos e resultados fictícios identificados. O fecho não produz uma classificação automática de aprovação/rejeição.
 
-Publicação final READY: `dpl_EDUXwjx21eEqLmVUWCN1zQLCiZQw`. GET anónimo à API devolveu 200, execução `dub1` confirmada nos cabeçalhos e resultados mantidos no Turso após republicação. Sete testes de dados/API passaram, incluindo mais de 30 entradas corretas na sala sem limitar a assembleia por contagens de tentativas erradas. Código-fonte local, ainda sem commits/remote GitHub; envio direto de ficheiros para Vercel.
+Publicação anterior à integração Git READY: `dpl_EDUXwjx21eEqLmVUWCN1zQLCiZQw`. GET anónimo à API devolveu 200, execução `dub1` confirmada nos cabeçalhos e resultados mantidos no Turso após republicação. Sete testes de dados/API passaram, incluindo mais de 30 entradas corretas na sala sem limitar a assembleia por contagens de tentativas erradas. Nessa fase o código-fonte era local, sem commits/remote GitHub, e a publicação usava envio direto de ficheiros; a integração Git posterior está descrita abaixo.
 
 ## Fonte, CI e proteção de main
 
@@ -55,3 +55,5 @@ O utilizador autorizou GitHub como fonte canónica, Vercel ligado ao mesmo repos
 `main` exige PR, branch atualizada e os checks `Static checks`, `Data and API` e `Browser flow`. A proteção aplica-se a administradores, proíbe force push e eliminação, e não exige aprovação humana. Um push de um commit vazio pelo proprietário foi realmente rejeitado com GH006, exigindo PR e os três checks; não continha código da aplicação.
 
 O CI usa Node 22.23.4, Actions fixadas por SHA e Playwright de desenvolvimento fixado em 1.64.1. Corre com bases locais e dados fictícios, sem segredos de produção. Só capturas fictícias de falhas são artefactos. As credenciais Turso foram retiradas do âmbito preview, preservando produção; sem um ambiente de dados isolado adicional, previews servem para rever a interface e a API falha fechada. O fluxo completo é testado no servidor isolado do CI. Não foi criado outro projeto Vercel ou outra base.
+
+O PR inicial #1 passou os três checks obrigatórios no commit final `581a64c` e foi integrado normalmente, sem bypass de administrador, no commit `7c53477` de `main`. O painel Vercel confirmou a ligação de `SilvaChico/assembleias` ao projeto existente `prj_QT8QqRRgm6K92mhJcdxosO2FEsXI`. Publicações seguintes devem partir da integração Git, preservando o endereço permanente, a base, os segredos e a região de produção.
