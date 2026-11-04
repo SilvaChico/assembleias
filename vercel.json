@@ -6,7 +6,11 @@
   "outputDirectory": "public",
   "regions": ["dub1"],
   "functions": { "api/index.js": { "maxDuration": 30 } },
-  "rewrites": [{ "source": "/api/:path*", "destination": "/api/index?route=:path*" }],
+  "rewrites": [
+    { "source": "/mesa", "destination": "/index.html" },
+    { "source": "/mesa/", "destination": "/index.html" },
+    { "source": "/api/:path*", "destination": "/api/index?route=:path*" }
+  ],
   "headers": [{
     "source": "/(.*)",
     "headers": [

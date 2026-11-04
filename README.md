@@ -1,4 +1,4 @@
-# Assembleias — nome provisório
+# Assembleias para a Acampada
 
 Código-fonte: [SilvaChico/assembleias](https://github.com/SilvaChico/assembleias). Processo de branches, CI obrigatório e publicações: [docs/development.md](docs/development.md).
 
@@ -14,7 +14,7 @@ npm run setup
 npm run dev
 ```
 
-Abrir `http://127.0.0.1:4173`. O comando `setup` cria `.env` com palavras-passe e códigos aleatórios diferentes para as duas assembleias, sem os escrever nos logs. Não substitui um `.env` existente. Consultar esse ficheiro localmente para obter as credenciais; o nome de utilizador da mesa é `mesa`. Em alternativa, copiar `.env.example` para `.env` e preencher os valores. Não partilhar nem publicar `.env`.
+Abrir `http://127.0.0.1:4173`. O acesso da mesa fica em `http://127.0.0.1:4173/mesa`, sem ligação na interface dos participantes. O comando `setup` cria `.env` com palavras-passe e códigos aleatórios diferentes para as duas assembleias, sem os escrever nos logs. Não substitui um `.env` existente. Consultar esse ficheiro localmente para obter as credenciais; o nome de utilizador da mesa é `mesa`. Em alternativa, copiar `.env.example` para `.env` e preencher os valores. Não partilhar nem publicar `.env`.
 
 O modo normal começa sem propostas. Para experimentar com exemplos fictícios:
 
@@ -26,9 +26,9 @@ O modo de teste usa uma base separada e está identificado na interface. Também
 
 ## Experimentar o percurso
 
-1. Escolher Lisboa ou Porto. Na vista Participante, introduzir o código anunciado na sala. A consulta das propostas é pública; a entrada na sala permite submeter e apoiar.
-2. Submeter uma proposta. Aparece imediatamente para todos os dispositivos ligados à mesma instância, sem aprovação da mesa. A lista usa a ordem de chegada; existe uma opção de mais recentes. Apoiar a discussão não é votar a favor nem impõe prioridade na agenda.
-3. Noutro separador ou dispositivo, abrir a vista Mesa e entrar com a palavra-passe dessa assembleia. Escolher a proposta e abrir a votação. Só pode existir uma votação aberta por assembleia; Lisboa e Porto podem votar em simultâneo.
+1. Escolher Lisboa ou Porto. Introduzir o código anunciado na sala para abrir a interface de propostas e votação. O código é partilhado e não prova presença nem unicidade; a API de consulta continua pública.
+2. Submeter uma proposta. Aparece imediatamente para todos os dispositivos ligados à mesma instância, sem aprovação da mesa. A lista usa a ordem de chegada. Não há categorias na criação nem na apresentação; categorias históricas são conservadas na base. Apoiar a discussão não é votar a favor nem impõe prioridade na agenda.
+3. Noutro separador ou dispositivo, abrir `/mesa` e entrar com a palavra-passe dessa assembleia. Escolher a proposta e abrir a votação. Só pode existir uma votação aberta por assembleia; Lisboa e Porto podem votar em simultâneo.
 4. Nos participantes, surge a proposta ativa e A favor, Contra e Abstenção. O voto é confirmado pelo servidor. Os totais por opção não são enviados à vista dos participantes enquanto a votação está aberta.
 5. Na mesa, introduzir e guardar os três totais presenciais. Nesta implementação local, a contagem é guardada antes de fechar/publicar; essa sequência operacional ainda pode ser ajustada após a clarificação do utilizador. Reenviar substitui os valores, não os soma. Uma versão de contagem evita sobrepor alterações feitas noutra vista da mesa.
 6. Fechar e publicar. Os resultados apresentam cada opção com o subtotal digital, presencial e combinado. A aplicação mostra totais; cabe à mesa interpretar e anunciar o resultado. Não calcula aprovação, rejeição, quórum ou maioria.
@@ -62,7 +62,7 @@ Abrir exatamente esse endereço em todos os dispositivos e reiniciar o servidor 
 
 HTML, CSS e módulos JavaScript no cliente; Node HTTP e o cliente libSQL no servidor. Não há framework nem compilação da interface. Localmente usa um ficheiro SQLite; na Vercel usa SQL sobre HTTPS para a base Turso, sem ficheiro efémero ou cópia local a fingir persistência. A base de dados impõe uma votação ativa por assembleia; as escritas são transacionais. Os resultados abertos são filtrados pelo servidor, e não apenas escondidos com CSS.
 
-As mensagens da interface e os erros de API estão centralizados em `public/locales/pt-PT.js`, usando `public/i18n.js`. Só existe português de Portugal; dados livres das propostas não são traduções. Ícones originais em `public/icons.js` e `public/favicon.svg`, sem recursos copiados do Acampada Pixel.
+As mensagens da interface e os erros de API estão centralizados em `public/locales/pt-PT.js`, usando `public/i18n.js`. Só existe português de Portugal; dados livres das propostas não são traduções. A tenda original escolhida pelo utilizador (opção D, sem pixelização) em `public/favicon.svg` é usada no logo e no favicon. As alternativas estão em `design/tent-options/`; não foram copiados recursos do Acampada Pixel. A interface já não carrega a antiga coleção de ícones.
 
 ```sh
 npm test
@@ -90,8 +90,8 @@ O acesso à base, operações transacionais, sessões da mesa e limite agregado 
 
 A aplicação não inclui analytics, rastreadores, session replay ou recursos de terceiros no cliente; os pedidos de rede do navegador foram verificados. Vercel e Turso podem processar IP e registos técnicos na infraestrutura. Não se garante anonimato absoluto, ausência de logs nos fornecedores, apagamento forense ou eliminação de backups. A aplicação regista apenas categorias técnicas de falhas inesperadas, sem SQL, credenciais, IP ou corpos dos pedidos. A retenção/observabilidade dos fornecedores exige revisão própria antes de uso real.
 
-A publicação é feita a partir de uma lista explícita de ficheiros de código, sem `.env`, `.data`, testes ou capturas. O comando `npm ci` e o lockfile reproduzem as dependências; `vercel.json` configura região, API e cabeçalhos. O cliente fala só com a sua própria origem; a ligação Turso ocorre no servidor.
+A publicação parte do repositório Git ligado ao projeto existente. `.env`, `.data`, bases locais e capturas estão excluídos do Git; apenas `public` é saída estática e a API é empacotada no servidor. O comando `npm ci` e o lockfile reproduzem as dependências; `vercel.json` configura região, API e cabeçalhos. O cliente fala só com a sua própria origem; a ligação Turso ocorre no servidor.
 
-A publicação atual está READY (`dpl_EDUXwjx21eEqLmVUWCN1zQLCiZQw`). A verificação final sem autenticação recebeu HTTP 200, confirmou a execução em Dublin pelos cabeçalhos e encontrou os resultados Turso conservados depois da nova publicação. O código-fonte passou a ser gerido no repositório público `SilvaChico/assembleias`, por branches `codex/`, pull requests e três checks obrigatórios no GitHub Actions. A publicação inicial por envio de ficheiros foi substituída por releases a partir do Git.
+A última publicação anterior a este redesenho foi verificada como READY a partir do commit `451d9fd` de `main` (`dpl_7mnhQrbiTSdp5hnaEhfuL1oXH2dM`). A verificação final sem autenticação recebeu HTTP 200, confirmou a execução em Dublin pelos cabeçalhos e encontrou os resultados Turso conservados depois da nova publicação. O código-fonte passou a ser gerido no repositório público `SilvaChico/assembleias`, por branches `codex/`, pull requests e três checks obrigatórios no GitHub Actions. A publicação inicial por envio de ficheiros foi substituída por releases a partir do Git.
 
 O contexto original de brainstorming continua em `docs/brief.md`; as decisões posteriores estão em `docs/decisoes.md`.

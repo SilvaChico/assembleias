@@ -25,14 +25,30 @@ try {
     page.on('pageerror',error => errors.push(error.message));
     page.on('request',request => { if (!request.url().startsWith(origin)) external.push(request.url()); });
   }
-  await participant.goto(origin); await chair.goto(origin+'/#mesa');
-  await participant.locator('#room-code').fill(code); await participant.locator('#room-form button[type=submit]').click();
+  await mkdir('test-results',{recursive:true});
+  await participant.goto(origin); await chair.goto(origin+'/mesa');
+  assert.equal(new URL(chair.url()).pathname,'/mesa');
+  assert.equal(await participant.locator('a[href*="mesa"], [data-view="desk"]').count(),0,'Participant navigation never advertises the mesa route');
+  await participant.locator('#room-form').waitFor();
+  assert.equal(await participant.locator('#workspace').isVisible(),false,'Room entry comes before the proposal interface');
+  assert.equal(await participant.locator('input:visible').count(),1);
+  await participant.screenshot({path:'test-results/entrada-mobile.png',fullPage:true});
+  await participant.locator('#room-code').fill('wrong-room-code');
+  await participant.locator('#room-form button[type=submit]').click();
+  await participant.getByText('Código de sala incorreto.',{exact:true}).waitFor();
+  assert.equal(await participant.locator('#workspace').isVisible(),false);
+  await chair.locator('#login-password').fill('wrong-chair-password');
+  await chair.locator('#login-form button[type=submit]').click();
+  await chair.getByText('Nome de utilizador ou palavra-passe incorretos.',{exact:true}).waitFor();
+  assert.equal(await chair.locator('#workspace').isVisible(),false,'The direct mesa path still requires the server-verified city password');
+  await participant.locator('#room-code').fill(code); await participant.locator('#room-code').press('Enter');
   await chair.locator('#login-password').fill(password); await chair.locator('#login-form button[type=submit]').click();
-  await chair.getByText('A conversa vem primeiro.',{exact:true}).waitFor();
+  await chair.getByText('Ainda não há votação aberta.',{exact:true}).waitFor();
   await participant.locator('[data-action=new]').click();
+  assert.equal(await participant.locator('[name=category]').count(),0,'New proposals do not ask for a category');
   await participant.locator('#proposal-title').fill('Curto');
   await participant.locator('#proposal-form button[type=submit]').click();
-  await participant.getByText('Escreva um título entre 8 e 120 caracteres.',{exact:true}).waitFor();
+  await participant.getByText('Escreve um título entre 8 e 120 caracteres.',{exact:true}).waitFor();
   const title = 'Uma oficina aberta de reparação · teste '+randomBytes(3).toString('hex');
   const card = (page, name = title) => page.locator('article').filter({has:page.getByRole('heading',{name,exact:true})});
   await participant.locator('#proposal-title').fill(title);
@@ -42,6 +58,12 @@ try {
   await chair.getByRole('heading',{name:title,exact:true}).waitFor();
   await card(chair).locator('[data-action=open]').click(); await chair.locator('[data-action=confirm-open]').click();
   await participant.locator('#vote-form').waitFor();
+  await participant.evaluate(()=>document.documentElement.style.fontSize='200%');
+  assert.equal(await participant.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'The active vote supports 200% text sizing on a small phone');
+  await participant.evaluate(()=>document.documentElement.style.removeProperty('font-size'));
+  await participant.waitForFunction(()=>!document.querySelector('#announcement').classList.contains('visible'));
+  await participant.screenshot({path:'test-results/votacao-mobile.png',fullPage:true});
+  await chair.screenshot({path:'test-results/contagem-desktop.png',fullPage:true});
   const otherTab = await participantContext.newPage(); await otherTab.goto(origin); await otherTab.locator('#vote-form').waitFor();
   await Promise.all([
     participant.locator('input[value=favor]').check(),
@@ -51,15 +73,16 @@ try {
     participant.evaluate(()=>document.querySelector('#vote-form')?.requestSubmit()),
     otherTab.evaluate(()=>document.querySelector('#vote-form')?.requestSubmit()),
   ]);
-  await participant.getByRole('heading',{name:'Voto registado.',exact:true}).waitFor();
-  await otherTab.getByRole('heading',{name:'Voto registado.',exact:true}).waitFor();
-  await participant.reload(); await participant.getByRole('heading',{name:'Voto registado.',exact:true}).waitFor();
+  await participant.getByRole('heading',{name:'Voto registado',exact:true}).waitFor();
+  await otherTab.getByRole('heading',{name:'Voto registado',exact:true}).waitFor();
+  await participant.reload(); await participant.getByRole('heading',{name:'Voto registado',exact:true}).waitFor();
   const current = await participant.evaluate(async()=> (await fetch('/api/assemblies/lisboa')).json());
   const currentProposal = current.proposals.find(item=>item.title===title);
+  assert.equal(currentProposal.category,'','Submission without a category is accepted by the server');
   assert.equal(currentProposal.digital,undefined); assert.equal(currentProposal.inPerson,undefined); assert.equal(currentProposal.supports,1);
   assert.equal(await participant.locator('#room-form').count(),0);
   await chair.locator('#count-favor').fill('-1'); await chair.locator('#save-counts').click();
-  await chair.getByText('A favor: introduza um número inteiro igual ou superior a zero.',{exact:true}).waitFor();
+  await chair.getByText('A favor: introduz um número inteiro igual ou superior a zero.',{exact:true}).waitFor();
   for(const [key,value]of Object.entries({favor:'4',against:'2',abstain:'1'})) await chair.locator('#count-'+key).fill(value);
   await chair.locator('#save-counts').click(); await chair.getByText('Contagem guardada: 7 votos presenciais.',{exact:true}).waitFor();
   await chair.waitForFunction(()=>!document.querySelector('#save-counts').disabled);
@@ -80,15 +103,17 @@ try {
   })).status,closedProposal.id);
   assert.equal(lateCountStatus,409,'The authenticated chair browser cannot change published physical counts');
   assert.deepEqual(await chair.locator('tfoot td').allTextContents(),['1','7','8']);
-  await participant.locator('#latest-result [data-action=result]').waitFor();
-  await participant.locator('#latest-result [data-action=result]').click();
+  await card(participant).locator('[data-action=result]').waitFor();
+  await card(participant).locator('[data-action=result]').click();
   await participant.getByRole('heading',{name:'Resultado da contagem',exact:true}).waitFor();
   assert.deepEqual(await participant.locator('tfoot td').allTextContents(),['1','7','8']);
   assert.equal(await participant.evaluate(()=>Object.keys(localStorage).filter(key=>key.startsWith('assembleias-voto-')).length),0);
   await mkdir('test-results',{recursive:true});
   await participant.screenshot({path:'test-results/resultado-mobile.png',fullPage:false});
-  await participant.getByRole('button',{name:'Voltar às propostas',exact:true}).click(); await chair.getByRole('button',{name:'Voltar às propostas',exact:true}).click();
+  await participant.getByRole('button',{name:'Volta às propostas',exact:true}).click(); await chair.getByRole('button',{name:'Volta às propostas',exact:true}).click();
   await chair.screenshot({path:'test-results/mesa-desktop.png',fullPage:true});
+  await participant.waitForFunction(()=>!document.querySelector('#announcement').classList.contains('visible'));
+  await participant.screenshot({path:'test-results/propostas-mobile.png',fullPage:true});
   // Lose the response after the database commits, then refresh and retry the same receipt.
   const retryTitle = 'Recuperação de ligação · teste '+randomBytes(3).toString('hex');
   await chair.locator('[data-action=new]').click();
@@ -100,10 +125,10 @@ try {
   const voteRoute='**/api/assemblies/lisboa/proposals/*/vote';
   await participant.route(voteRoute,async route=>{await route.fetch();await route.abort('failed');},{times:1});
   await participant.locator('input[value=favor]').check(); await participant.locator('#vote-form button[type=submit]').click();
-  await participant.getByText('A confirmação não chegou. Não repita automaticamente: verifique o estado e confirme com a mesa.',{exact:true}).waitFor();
+  await participant.getByText('A confirmação não chegou. Vê o estado ou confirma com a mesa antes de repetir.',{exact:true}).waitFor();
   await participant.reload(); await participant.locator('#vote-form').waitFor();
   await participant.locator('input[value=against]').check(); await participant.locator('#vote-form button[type=submit]').click();
-  await participant.getByRole('heading',{name:'Voto registado.',exact:true}).waitFor();
+  await participant.getByRole('heading',{name:'Voto registado',exact:true}).waitFor();
   await otherTab.route('**/api/**',route=>route.abort('failed'));
   await chair.locator('#save-counts').click(); await chair.waitForFunction(()=>!document.querySelector('#save-counts').disabled);
   await chair.locator('[data-action=close]').click(); await chair.locator('[data-action=confirm-close]').click();
@@ -112,15 +137,17 @@ try {
   const retryResult=await participant.evaluate(async()=>(await fetch('/api/assemblies/lisboa')).json());
   assert.deepEqual(retryResult.proposals.find(item=>item.title===retryTitle).digital,{favor:1,against:0,abstain:0});
   await otherTab.unroute('**/api/**'); await otherTab.reload();
-  await otherTab.getByRole('heading',{name:'A conversa vem primeiro.',exact:true}).waitFor();
+  await otherTab.getByRole('heading',{name:'Ainda não há votação aberta.',exact:true}).waitFor();
   assert.equal(await otherTab.locator('#vote-form').count(),0);
-  await chair.getByRole('button',{name:'Voltar às propostas',exact:true}).click();
+  await chair.getByRole('button',{name:'Volta às propostas',exact:true}).click();
   for(const size of [{width:375,height:812},{width:667,height:375},{width:320,height:740}]) {
     await participant.setViewportSize(size);
     assert.equal(await participant.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`No overflow at ${size.width}px`);
   }
+  if (await participant.locator('#modal:open').count()) await participant.locator('#modal:open [data-action=dismiss]').first().click();
   const controls=await participant.locator('button:visible,select:visible,input:visible,nav a:visible').evaluateAll(elements=>elements.filter(element=>!element.disabled).map(element=>({name:element.textContent.trim(),height:(element.type==='radio'?element.closest('label'):element).getBoundingClientRect().height})));
   assert.deepEqual(controls.filter(item=>item.height<43),[],'Interactive targets are at least 44px high');
+  assert.doesNotMatch(await participant.locator('body').innerText(),/\b(você|Escolha|Escreva|Introduza|Aguarde|Guarde)\b/,'Visible copy addresses the participant informally');
   await participant.locator('#assembly-select').selectOption('porto');
   await participant.locator('#room-form').waitFor();
   assert.equal(await participant.getByRole('heading',{name:title,exact:true}).count(),0);

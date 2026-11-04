@@ -21,7 +21,7 @@ test('flow: submission, discussion support, per-assembly opening, voting and clo
     assert.equal((await store.snapshot('lisboa')).proposals[0].supports, 1);
     await assert.rejects(async () => (await store.vote('lisboa', first, 'favor', token())), /não está aberta/);
     (await store.open('lisboa', first)); (await store.open('porto', porto));
-    await assert.rejects(async () => (await store.open('lisboa', second)), /Feche a votação/);
+    await assert.rejects(async () => (await store.open('lisboa', second)), /Fecha a votação/);
     await assert.rejects(async () => (await store.support('lisboa', first)), /fechados/);
     const browserToken = token();
     assert.deepEqual((await store.vote('lisboa', first, 'favor', browserToken)), { alreadyRecorded: false });
@@ -33,7 +33,7 @@ test('flow: submission, discussion support, per-assembly opening, voting and clo
       assert.equal(snapshot.proposals[0].digitalTotal, undefined);
     }
     assert.equal((await store.snapshot('lisboa')).proposals[0].inPerson, undefined);
-    await assert.rejects(async () => (await store.closeVoting('lisboa', first, { version: 0 })), /Guarde a contagem/);
+    await assert.rejects(async () => (await store.closeVoting('lisboa', first, { version: 0 })), /Guarda a contagem/);
     (await store.saveCounts('lisboa', first, { favor: '8', against: '2', abstain: '1', version: 0 }));
     await assert.rejects(async () => (await store.saveCounts('lisboa', first, { ...zeros, version: 0 })), /alterada/);
     (await store.saveCounts('lisboa', first, { favor: '8', against: '2', abstain: '1', version: 1 }));
@@ -120,10 +120,15 @@ test('API: assembly-scoped chair access, room code, origin and private files', a
   const otherEnter = await request('/api/assemblies/lisboa/room/enter', { body: { code: 'sala-lisboa' } });
   assert.equal(enter.cookie, otherEnter.cookie); assert.match(enter.headers.get('set-cookie'), /HttpOnly/); assert.doesNotMatch(enter.headers.get('set-cookie'), /Max-Age/);
   assert.equal((await request('/api/assemblies/porto/proposals', { body: proposal, cookie: enter.cookie })).status, 401);
-  const submitted = await request('/api/assemblies/lisboa/proposals', { body: proposal, cookie: enter.cookie }); assert.equal(submitted.status, 201);
+  const {category: _legacyCategory, ...withoutCategory} = proposal;
+  const submitted = await request('/api/assemblies/lisboa/proposals', { body: withoutCategory, cookie: enter.cookie }); assert.equal(submitted.status, 201);
   const publicState = await request('/api/assemblies/lisboa'); assert.equal(publicState.data.proposals[0].digital, undefined); assert.equal(publicState.data.proposals.length, 2);
+  assert.equal(publicState.data.proposals[0].category,'Espaço comum','Existing category data is preserved');
+  assert.equal(publicState.data.proposals[1].category,'','A new proposal needs no category');
   assert.match(publicState.headers.get('content-security-policy'), /connect-src 'self'/);
   assert.equal(publicState.headers.get('permissions-policy'), 'geolocation=(), camera=(), microphone=()');
+  assert.equal((await request('/mesa')).status, 200);
+  assert.equal((await request('/mesa/')).status, 200);
   assert.equal((await request('/.env')).status, 404); assert.equal((await request('/lib/store.mjs')).status, 404);
   assert.equal((await request('/', { host: 'other.invalid' })).status, 403);
   await request('/api/assemblies/lisboa/admin/logout', { body: {}, cookie: login.cookie });
