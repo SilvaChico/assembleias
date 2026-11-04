@@ -71,6 +71,14 @@ try {
   const closedProposal = result.proposals.find(item=>item.title===title);
   assert.equal(Object.values(closedProposal.digital).reduce((a,b)=>a+b),1);
   assert.deepEqual(closedProposal.inPerson,{favor:4,against:2,abstain:1});
+  const lateVoteStatus = await participant.evaluate(async id => (await fetch(`/api/assemblies/lisboa/proposals/${id}/vote`,{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({choice:'favor',token:'0'.repeat(64)})
+  })).status,closedProposal.id);
+  assert.equal(lateVoteStatus,409,'The authenticated participant browser cannot submit a late vote');
+  const lateCountStatus = await chair.evaluate(async id => (await fetch(`/api/assemblies/lisboa/admin/proposals/${id}/counts`,{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({favor:99,against:0,abstain:0,version:2})
+  })).status,closedProposal.id);
+  assert.equal(lateCountStatus,409,'The authenticated chair browser cannot change published physical counts');
   assert.deepEqual(await chair.locator('tfoot td').allTextContents(),['1','7','8']);
   await participant.locator('#latest-result [data-action=result]').waitFor();
   await participant.locator('#latest-result [data-action=result]').click();
