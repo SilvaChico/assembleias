@@ -23,9 +23,9 @@ p{margin-bottom:12px;overflow-wrap:anywhere}
 .entry-screen .header{padding-top:clamp(36px,10vh,100px);align-items:center}
 .entry-screen h1{font-size:1.6rem;max-width:255px}
 .entry-screen #main{margin-top:12px}
-.assembly-picker{display:flex;align-items:center;gap:16px;margin-bottom:24px}
+.assembly-picker{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;margin-bottom:24px}
 .assembly-picker label{margin:0}
-.assembly-picker select{width:190px}
+.assembly-picker select{width:190px;max-width:100%}
 .entry-screen .assembly-picker{display:block;margin-bottom:16px}
 .entry-screen .assembly-picker select{width:100%}
 label{display:block;font-weight:600;margin-bottom:6px}
@@ -55,7 +55,7 @@ input[readonly]{background:var(--wash)}
 .voting-description{white-space:pre-line}
 .empty-vote{padding:12px 0;border:0;border-top:1px solid var(--line);margin-bottom:20px}
 .empty-vote h2{font-size:1rem;font-weight:500;margin:0;color:var(--muted)}
-.section-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:8px}
+.section-heading{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px;margin-bottom:8px}
 .section-heading h2{margin:0}
 #proposal-count{font-size:1rem;font-weight:400;color:var(--muted)}
 .proposal-card{border-bottom:1px solid var(--line);padding:20px 0}
@@ -110,8 +110,8 @@ dialog::backdrop{background:#172a20aa}
 .results-table th:first-child{text-align:left}
 .results-table tfoot{font-weight:700}
 .about-copy h3{margin-top:24px}
-.skip-link{position:absolute;top:-80px;left:16px;padding:12px;background:var(--ink);color:white;z-index:40}
-.skip-link:focus{top:8px}
+.skip-link{position:absolute;top:8px;left:16px;max-width:calc(100% - 32px);transform:translateY(calc(-100% - 16px));padding:12px;background:var(--ink);color:white;z-index:40}
+.skip-link:focus{transform:none}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 @media(max-width:420px){.wrap{width:calc(100% - 32px)}.header{padding-top:20px}h1{font-size:1.15rem}.brand-symbol{width:36px;height:36px}.entry-screen h1{font-size:1.45rem}.section-heading{gap:8px}.button{padding-inline:12px}.card-footer{flex-wrap:wrap;gap:4px 12px}.card-footer .button,.card-footer .text-button{margin-left:auto}.counting-section fieldset{gap:8px}.count-field input{padding-inline:8px}.voting-panel.active-vote{padding:16px 12px}dialog{padding:16px}.results-table{font-size:.8rem}.results-table th,.results-table td{padding-inline:2px}.entry-screen .footer{font-size:.75rem}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
