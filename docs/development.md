@@ -22,11 +22,13 @@ GitHub Actions runs **Static checks**, **Data and API**, and **Browser flow** on
 
 Use a `codex/` branch and a pull request. `main` requires the three stable checks above against an up-to-date branch. The PR requirement also applies to administrators, force pushes and deletion are disabled, and the required number of human approvals is zero. Repository owners can still edit repository settings; branch protection is not an immutable policy outside the owner's control.
 
-The first `main` commit contained only GitHub's generated README. The application and CI are introduced together through the setup PR, with the protection already enabled.
+The first `main` commit contained only GitHub's generated README. [Setup PR #1](https://github.com/SilvaChico/assembleias/pull/1) introduced the application and CI together after protection was enabled. All three required checks passed on the final PR head, and the PR was merged without an administrator bypass. A real direct-push probe by the repository owner was rejected with `GH006`, requiring a PR and all three checks.
 
 ## Vercel
 
 Keep the existing `assembleias` project and Turso database; do not create replacement projects or databases. `main` is the production source and feature branches/PRs get protected preview deployments. Production uses the existing private Vercel environment settings and Ireland region.
+
+The existing project (`prj_QT8QqRRgm6K92mhJcdxosO2FEsXI`) is connected to `SilvaChico/assembleias` through Vercel's Git integration. Use PR merges to release changes. The permanent production URL remains [assembleias-silvachicos-projects.vercel.app](https://assembleias-silvachicos-projects.vercel.app). Check the deployment's Git commit against `main` when verifying a release; a source upload with matching files is not evidence of a working Git integration.
 
 CI deliberately runs locally instead of using the hosted database. Production database credentials must not be made available to unmerged preview code. Without a separate preview data environment, previews are for interface review; their API must fail closed when server credentials are absent. The complete voting flow is tested in CI's isolated server. Do not replace shared production storage with a function-local file or in-memory imitation.
 
