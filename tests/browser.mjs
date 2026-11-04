@@ -60,7 +60,7 @@ try {
   assert.equal(await participant.locator('#vote-code').getAttribute('maxlength'), '4');
   await screenshot(participant, 'vote-entry-mobile');
   await participant.locator('[data-action=about]').click();
-  await participant.getByText('A aplicação não regista o teu endereço IP nem o envia para a base de dados.', { exact: true }).waitFor();
+  await participant.getByRole('dialog', { name: 'Privacidade e limites', exact: true }).waitFor();
   await participant.keyboard.press('Escape');
   assert.equal(await participant.locator('[data-action=about]').evaluate(element => element === document.activeElement), true);
   await entry(participant, 'A1CD');

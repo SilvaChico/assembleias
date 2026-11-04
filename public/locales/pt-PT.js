@@ -32,7 +32,7 @@ export default {
 
   entry_privacy: 'Não precisas de conta nem de indicar quem és.',
   privacy_stored: 'Guardamos propostas, apoios e totais dos votos. Não incluas nomes ou contactos nas propostas. Não usamos localização nem rastreadores.',
-  privacy_ip: 'A aplicação não regista o teu endereço IP nem o envia para a base de dados.',
+  privacy_ip: 'A aplicação não guarda o teu IP.',
   privacy_room: 'O código de votação é partilhado. Não identifica uma pessoa nem prova presença ou uma pessoa, um voto.',
   privacy_repeat: 'Para evitar repetições, o navegador guarda um código temporário por proposta, sem a tua escolha. É apagado quando recebe o fecho; se não voltares a essa votação, pode permanecer no dispositivo. Outro navegador, uma janela privada ou limpar o armazenamento contorna esta restrição. Não votes também por cartão.',
   room_not_found: 'Sala não encontrada nesta assembleia.',
@@ -158,7 +158,7 @@ export default {
   "lisboa_e_porto_tem_propostas": "Lisboa e Porto têm propostas e votações separadas. As atualizações chegam de dois em dois segundos.",
   "o_que_fica_guardado": "O que fica guardado?",
   "propostas_apoios_agregados_e_contagens": "Guardamos propostas, apoios agregados e totais de votos. Não há contas de participantes nem histórico individual de escolhas. Não incluas dados pessoais nas propostas.",
-  "a_aplicacao_nao_usa_geolocalizacao": "A aplicação não usa geolocalização, analytics, rastreadores ou recursos externos. Não regista IP, conteúdos dos pedidos ou acessos nos seus próprios logs. O navegador, a rede e os fornecedores podem ter registos técnicos; não prometemos anonimato absoluto.",
+  "a_aplicacao_nao_usa_geolocalizacao": "Não usamos localização nem rastreadores. A aplicação não guarda o teu IP.",
   "acesso_de_participantes": "Acesso de participantes",
   "o_codigo_de_sala_e": "O código de sala é partilhado e anunciado presencialmente. A entrada usa um cookie de sessão igual para toda a sala, partilhado entre separadores. Não identifica uma pessoa nem prova presença. Dura a sessão do navegador, sujeita às suas funções de restauro. Ao mudar o código de sala, é necessário voltar a entrar.",
   "restricao_no_mesmo_navegador": "Restrição no mesmo navegador",
@@ -277,5 +277,4 @@ export default {
   "feito_para_apoiar_a_deliberacao": "Feito para apoiar a deliberação coletiva.",
   "privacidade_e_limites": "Privacidade e limites",
   "ative_o_javascript_para_usar": "Ativa o JavaScript para usar esta aplicação local.",
-  "hosting_notice": "O site está alojado na Vercel, que recebe o teu IP quando te ligas. Não garantimos que os fornecedores não guardem registos, nem prometemos anonimato absoluto."
 };
