@@ -22,7 +22,7 @@ Este registo complementa o brainstorming de `brief.md`, sem o reescrever como um
 ## Escolhas técnicas reversíveis da base local
 
 - HTML/CSS/JavaScript sem framework e Node HTTP com libSQL. SQLite em ficheiro local ou Turso alojado na Vercel, sem disco efémero como persistência. Texto de propostas e contagens agregadas são conservados; recibos da votação ativa e sessões administrativas têm conservação própria, descrita no README.
-- Lista em ordem de chegada, com alternativa de mais recentes. Apoios positivos à discussão mantidos como funcionalidade existente, sem determinar agenda nem aprovação e sem alegar unicidade.
+- Inicialmente, lista em ordem de chegada com alternativa de mais recentes; o redesenho simplificado posterior conserva só a ordem de chegada. Apoios positivos à discussão mantidos como funcionalidade existente, sem determinar agenda nem aprovação e sem alegar unicidade.
 - Estado temporário aleatório por proposta em localStorage, até ao fecho observado/24 h, sem escolha; resumo consumido transacionalmente no servidor e eliminado logicamente no fecho. Nunca reutilizar entre propostas.
 - Código comum de sala em cookie de sessão HttpOnly, distinto do cookie administrativo. O cookie comum é igual para todos os participantes da sala e não constitui prova de pessoa/presença.
 - Atualizações por polling de dois segundos. Sessões administrativas até oito horas guardadas na base partilhada; logout ou alteração das credenciais/segredo invalida o acesso. Códigos de sala configurados por ambiente; mudar o código exige nova entrada. O segredo estável mantém sessões e entrada na sala entre instâncias/reinícios.
@@ -57,3 +57,11 @@ O utilizador autorizou GitHub como fonte canónica, Vercel ligado ao mesmo repos
 O CI usa Node 22.23.4, Actions fixadas por SHA e Playwright de desenvolvimento fixado em 1.64.1. Corre com bases locais e dados fictícios, sem segredos de produção. Só capturas fictícias de falhas são artefactos. As credenciais Turso foram retiradas do âmbito preview, preservando produção; sem um ambiente de dados isolado adicional, previews servem para rever a interface e a API falha fechada. O fluxo completo é testado no servidor isolado do CI. Não foi criado outro projeto Vercel ou outra base.
 
 O PR inicial #1 passou os três checks obrigatórios no commit final `581a64c` e foi integrado normalmente, sem bypass de administrador, no commit `7c53477` de `main`. O painel Vercel confirmou a ligação de `SilvaChico/assembleias` ao projeto existente `prj_QT8QqRRgm6K92mhJcdxosO2FEsXI`. Publicações seguintes devem partir da integração Git, preservando o endereço permanente, a base, os segredos e a região de produção.
+
+## Simpler campsite interface — confirmed redesign
+
+The user rejected the warm-paper dashboard and requested a much smaller, informal interface. The working title is **Assembleias para a Acampada**. Entry contains only restrained branding, the city dropdown, room code and enter action, with a small demonstration/privacy footer. Proposals and voting appear after room entry; this navigation gate does not make the public read API private. The mesa has a dedicated `/mesa` route and no participant navigation link. Its existing per-city password authentication remains server-verified.
+
+Proposal creation asks for title and description only. The server accepts a missing category, stores an empty value for new category-free proposals, and keeps historical categories and compatibility with older clients. There is no destructive schema migration. The active proposal appears once, above the other proposals; closure and results remain final.
+
+The user viewed three original pixel tent marks, rejected pixelation, then viewed smooth original SVG options D/E/F and explicitly chose **D — Tenda clássica**. That mark is used for both logo and favicon. No artwork, fonts, code or other resources were copied from Acampada Pixel. The layout uses a limited green palette, flat rows, system typography and text actions, with no new dependencies. Portuguese copy addresses people informally as *tu*.
