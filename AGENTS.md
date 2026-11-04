@@ -13,3 +13,6 @@
 - Usar o Acampada Pixel como inspiração; não copiar código, imagens, áudio ou outros recursos sem verificar a licença ou obter autorização.
 - Escolher uma implementação simples e justificar as escolhas. Aplicar as skills relevantes da sessão. Não criar serviços externos nem publicar a aplicação como parte do primeiro protótipo local.
 - Verificar os fluxos essenciais e a acessibilidade: submissão, apoios, abertura/fecho, bloqueio de votos fora do período e leitura dos resultados. Não criar testes que apenas espelhem código trivial.
+
+- Leave every pull request open for the user to review. Never merge automatically or release to production without a later explicit instruction from the user.
+- Add screenshots to PR descriptions whenever possible, using fictitious local data and no production credentials or room codes.

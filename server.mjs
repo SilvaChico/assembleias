@@ -26,15 +26,13 @@ export async function createApplication({ store, passwords = {}, roomCodes = {},
   store ||= await createStore();
   const passwordHashes = new Map(), credentialBindings = new Map();
   const roomSecret = sessionSecret;
-  const roomGrants = new Map();
+  await store.initializeRooms(roomCodes);
   for (const slug of ['lisboa', 'porto']) {
     if (passwords[slug]?.length >= 12) {
       const salt = randomBytes(16);
       passwordHashes.set(slug, { salt, hash: scryptSync(passwords[slug], salt, 32) });
       credentialBindings.set(slug, createHmac('sha256', sessionSecret).update(`${slug}:${passwords[slug]}`).digest('hex'));
     }
-    // This authorization is identical for the whole room; it is not a participant identifier.
-    if (roomCodes[slug]?.length >= 4) roomGrants.set(slug, createHmac('sha256', roomSecret).update(`${slug}:${roomCodes[slug]}`).digest('hex'));
   }
   const sessionFor = async (request, slug) => {
     const token = request.headers.cookie?.split(';').map(value => value.trim()).find(value => value.startsWith(`mesa_${slug}=`))?.slice(`mesa_${slug}=`.length);
@@ -68,11 +66,25 @@ export async function createApplication({ store, passwords = {}, roomCodes = {},
     const expectedOrigin = allowedOrigins.find(value => new URL(value).host === request.headers.host);
     if (request.headers.origin !== expectedOrigin || request.headers['sec-fetch-site'] === 'cross-site') throw new AppError(t('a_origem_do_pedido_nao'), 403);
   };
-  const roomGrantFor = (request, slug) => request.headers.cookie?.split(';').map(value => value.trim()).find(value => value.startsWith(`sala_${slug}=`))?.slice(`sala_${slug}=`.length);
-  const hasRoom = (request, slug) => roomGrants.has(slug) && equal(roomGrantFor(request, slug), roomGrants.get(slug));
-  const roomCookie = (slug, grant) => `sala_${slug}=${grant}; HttpOnly; SameSite=Strict; Path=/api/assemblies/${slug}${grant ? '' : '; Max-Age=0'}${origin.startsWith('https:') ? '; Secure' : ''}`;
-  const requireRoom = (request, slug) => {
-    if (!hasRoom(request, slug)) throw new AppError(t('introduza_o_codigo_de_sala'), 401);
+  // The grant is identical for everyone in one room; it carries no participant identity.
+  const grantFor = room => createHmac('sha256', roomSecret).update(`${room.id}:${room.code}`).digest('hex');
+  const roomCookie = value => `sala=${value}; HttpOnly; SameSite=Strict; Path=/api${value ? '' : '; Max-Age=0'}${origin.startsWith('https:') ? '; Secure' : ''}`;
+  const admittedRoom = async request => {
+    const value = request.headers.cookie?.split(';').map(value => value.trim()).find(value => value.startsWith('sala='))?.slice(5);
+    if (!value || !/^(lisboa|porto|room-[a-f0-9]{24})\.[a-f0-9]{64}$/.test(value)) return null;
+    const [id, grant] = value.split('.');
+    const room = await store.getRoom(id).catch(error => { if (error.status === 404) return null; throw error; });
+    return room?.code && equal(grant, grantFor(room)) ? room : null;
+  };
+  const participantAction = async (room, route, data) => {
+    if (route === '/proposals') return { status: 201, data: await store.submit(room.id, data) };
+    const action = route.match(/^\/proposals\/(\d+)\/(support|vote|vote-status)$/);
+    if (!action) throw new AppError(t('acao_nao_encontrada'), 404);
+    const id = Number(action[1]);
+    if (action[2] === 'support') await store.support(room.id, id);
+    else if (action[2] === 'vote-status') return { status: 200, data: { recorded: await store.voteRecorded(room.id, id, data.token) } };
+    else return { status: 200, data: { ok: true, ...await store.vote(room.id, id, data.choice, data.token) } };
+    return { status: 200, data: { ok: true } };
   };
 
   const handler = async (request, response) => {
@@ -92,32 +104,51 @@ export async function createApplication({ store, passwords = {}, roomCodes = {},
         response.setHeader('Content-Type', file[1]);
         response.writeHead(200).end(request.method === 'HEAD' ? undefined : content); return;
       }
+      if (pathname.startsWith('/api/rooms/')) {
+        const route = pathname.slice('/api/rooms'.length);
+        if (route === '/session' && request.method === 'GET') {
+          const room = await admittedRoom(request);
+          send(response, 200, { ...(room ? await store.snapshot(room.id) : {}), roomGranted: Boolean(room), testMode, hosted: store.remote }); return;
+        }
+        if (request.method !== 'POST') throw new AppError(t('metodo_nao_permitido'), 405);
+        assertOrigin(request);
+        const data = await readJson(request);
+        if (route === '/enter') {
+          let room;
+          try { room = await store.resolveRoom(data.code); }
+          catch (error) {
+            if (error.status !== 401) throw error;
+            await store.reserveAttempt('rooms', 'entry', 30); throw error;
+          }
+          response.setHeader('Set-Cookie', roomCookie(`${room.id}.${grantFor(room)}`));
+          send(response, 200, { granted: true, room }); return;
+        }
+        if (route === '/leave') { response.setHeader('Set-Cookie', roomCookie('')); send(response, 200, { granted: false }); return; }
+        const room = await admittedRoom(request);
+        if (!room) throw new AppError(t('introduza_o_codigo_de_sala'), 401);
+        const result = await participantAction(room, route, data);
+        send(response, result.status, result.data); return;
+      }
       if (pathname === '/api/assemblies' && request.method === 'GET') {
         send(response, 200, { assemblies: await store.listAssemblies(), testMode }); return;
       }
       const match = pathname.match(/^\/api\/assemblies\/(lisboa|porto)(\/.*)?$/);
       if (!match) throw new AppError(t('recurso_nao_encontrado'), 404);
-      const [, slug, route = ''] = match;
-      if (route === '' && request.method === 'GET') {
-        send(response, 200, { ...await store.snapshot(slug), testMode, hosted: store.remote, roomConfigured: roomGrants.has(slug), roomGranted: hasRoom(request, slug) }); return;
-      }
+      const slug = match[1];
+      let route = match[2] || '', roomId = slug;
       if (route === '/admin/session' && request.method === 'GET') {
         const authenticated = Boolean(await sessionFor(request, slug));
-        send(response, 200, { authenticated, configured: passwordHashes.has(slug), ...(authenticated ? await store.snapshot(slug, { admin: true }) : {}) }); return;
+        let snapshot = {};
+        if (authenticated) {
+          roomId = new URL(request.url, origin).searchParams.get('room') || slug;
+          if ((await store.getRoom(roomId)).assembly !== slug) throw new AppError(t('room_not_found'), 404);
+          snapshot = { ...await store.snapshot(roomId, { admin: true }), rooms: await store.listRooms(slug) };
+        }
+        send(response, 200, { authenticated, configured: passwordHashes.has(slug), testMode, hosted: store.remote, ...snapshot }); return;
       }
       if (request.method !== 'POST') throw new AppError(t('metodo_nao_permitido'), 405);
       assertOrigin(request);
       const data = await readJson(request);
-      if (route === '/room/enter') {
-        if (!roomGrants.has(slug)) throw new AppError(t('o_codigo_desta_sala_ainda'), 503);
-        if (!equal(data.code, roomCodes[slug])) {
-          await store.reserveAttempt(slug, 'room', 30);
-          throw new AppError(t('codigo_de_sala_incorreto'), 401);
-        }
-        response.setHeader('Set-Cookie', roomCookie(slug, roomGrants.get(slug)));
-        send(response, 200, { granted: true }); return;
-      }
-      if (route === '/room/leave') { response.setHeader('Set-Cookie', roomCookie(slug, '')); send(response, 200, { granted: false }); return; }
       if (route === '/admin/login') {
         const configured = passwordHashes.get(slug);
         if (!configured) throw new AppError(t('a_palavra_passe_desta_mesa_2'), 503);
@@ -138,23 +169,20 @@ export async function createApplication({ store, passwords = {}, roomCodes = {},
           response.setHeader('Set-Cookie', cookie(slug, '', 0));
           send(response, 200, { authenticated: false }); return;
         }
-        if (route === '/admin/proposals') { send(response, 201, await store.submit(slug, data)); return; }
+        if (route === '/admin/rooms') { send(response, 201, { room: await store.createRoom(slug) }); return; }
+        const roomRoute = route.match(/^\/admin\/rooms\/([^/]+)(\/.*)$/);
+        if (roomRoute) { roomId = roomRoute[1]; route = `/admin${roomRoute[2]}`; }
+        if ((await store.getRoom(roomId)).assembly !== slug) throw new AppError(t('room_not_found'), 404);
+        if (route === '/admin/proposals') { send(response, 201, await store.submit(roomId, data)); return; }
         const action = route.match(/^\/admin\/proposals\/(\d+)\/(open|counts|close)$/);
         if (!action) throw new AppError(t('acao_nao_encontrada'), 404);
         const id = Number(action[1]);
-        if (action[2] === 'open') await store.open(slug, id);
-        if (action[2] === 'counts') await store.saveCounts(slug, id, data);
-        if (action[2] === 'close') await store.closeVoting(slug, id, data);
+        if (action[2] === 'open') await store.open(roomId, id);
+        if (action[2] === 'counts') await store.saveCounts(roomId, id, data);
+        if (action[2] === 'close') await store.closeVoting(roomId, id, data);
         send(response, 200, { ok: true }); return;
       }
-      requireRoom(request, slug);
-      if (route === '/proposals') { send(response, 201, await store.submit(slug, data)); return; }
-      const action = route.match(/^\/proposals\/(\d+)\/(support|vote|vote-status)$/);
-      if (!action) throw new AppError(t('acao_nao_encontrada'), 404);
-      if (action[2] === 'support') await store.support(slug, Number(action[1]));
-      else if (action[2] === 'vote-status') { send(response, 200, { recorded: await store.voteRecorded(slug, Number(action[1]), data.token) }); return; }
-      else { send(response, 200, { ok: true, ...await store.vote(slug, Number(action[1]), data.choice, data.token) }); return; }
-      send(response, 200, { ok: true });
+      throw new AppError(t('recurso_nao_encontrado'), 404);
     } catch (error) {
       if (!(error instanceof AppError)) console.error('request_failure', error.code || error.name || 'Error');
       if (error instanceof AppError && error.status === 429) response.setHeader('Retry-After', '60');

@@ -32,7 +32,13 @@ try {
   await participant.locator('#room-form').waitFor();
   assert.equal(await participant.locator('#workspace').isVisible(),false,'Room entry comes before the proposal interface');
   assert.equal(await participant.locator('input:visible').count(),1);
+  assert.equal(await participant.locator('select').count(),0,'Participant entry has no city selector');
   await participant.screenshot({path:'test-results/entrada-mobile.png',fullPage:true});
+  await participant.locator('[data-action=about]').click();
+  await participant.getByText('A aplicação não regista o teu endereço IP nem o envia para a base de dados.',{exact:true}).waitFor();
+  await participant.screenshot({path:'test-results/privacidade-mobile.png',fullPage:false});
+  await participant.keyboard.press('Escape');
+  assert.equal(await participant.locator('[data-action=about]').evaluate(element=>element===document.activeElement),true,'Closing privacy restores keyboard focus');
   await participant.locator('#room-code').fill('wrong-room-code');
   await participant.locator('#room-form button[type=submit]').click();
   await participant.getByText('Código de sala incorreto.',{exact:true}).waitFor();
@@ -44,6 +50,17 @@ try {
   await participant.locator('#room-code').fill(code); await participant.locator('#room-code').press('Enter');
   await chair.locator('#login-password').fill(password); await chair.locator('#login-form button[type=submit]').click();
   await chair.getByText('Ainda não há votação aberta.',{exact:true}).waitFor();
+  await chair.locator('[data-action=create-room]').click();
+  await chair.waitForFunction(() => document.querySelector('#desk-room-select')?.value.startsWith('room-'));
+  const firstRoom = await chair.locator('#desk-room-select').inputValue();
+  const roomCode = await chair.locator('#room-context strong').innerText();
+  await participant.locator('[data-action=leave-room]').click();
+  await participant.locator('#room-form').waitFor();
+  await participant.locator('#room-code').fill(roomCode.toLowerCase()); await participant.locator('#room-code').press('Enter');
+  await participant.locator('[data-action=new]').waitFor();
+  assert.equal(await participant.locator('select').count(),0,'An admitted participant has no city selector');
+  assert.equal(await participant.locator('#room-context strong').innerText(),roomCode);
+  await chair.screenshot({path:'test-results/salas-mesa.png',fullPage:true});
   await participant.locator('[data-action=new]').click();
   assert.equal(await participant.locator('[name=category]').count(),0,'New proposals do not ask for a category');
   await participant.locator('#proposal-title').fill('Curto');
@@ -76,7 +93,7 @@ try {
   await participant.getByRole('heading',{name:'Voto registado',exact:true}).waitFor();
   await otherTab.getByRole('heading',{name:'Voto registado',exact:true}).waitFor();
   await participant.reload(); await participant.getByRole('heading',{name:'Voto registado',exact:true}).waitFor();
-  const current = await participant.evaluate(async()=> (await fetch('/api/assemblies/lisboa')).json());
+  const current = await participant.evaluate(async()=> (await fetch('/api/rooms/session')).json());
   const currentProposal = current.proposals.find(item=>item.title===title);
   assert.equal(currentProposal.category,'','Submission without a category is accepted by the server');
   assert.equal(currentProposal.digital,undefined); assert.equal(currentProposal.inPerson,undefined); assert.equal(currentProposal.supports,1);
@@ -90,17 +107,17 @@ try {
   await chair.waitForFunction(()=>!document.querySelector('#save-counts').disabled);
   await chair.locator('[data-action=close]').click(); await chair.locator('[data-action=confirm-close]').click();
   await chair.getByRole('heading',{name:'Resultado da contagem',exact:true}).waitFor();
-  const result = await participant.evaluate(async()=> (await fetch('/api/assemblies/lisboa')).json());
+  const result = await participant.evaluate(async()=> (await fetch('/api/rooms/session')).json());
   const closedProposal = result.proposals.find(item=>item.title===title);
   assert.equal(Object.values(closedProposal.digital).reduce((a,b)=>a+b),1);
   assert.deepEqual(closedProposal.inPerson,{favor:4,against:2,abstain:1});
-  const lateVoteStatus = await participant.evaluate(async id => (await fetch(`/api/assemblies/lisboa/proposals/${id}/vote`,{
+  const lateVoteStatus = await participant.evaluate(async id => (await fetch(`/api/rooms/proposals/${id}/vote`,{
     method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({choice:'favor',token:'0'.repeat(64)})
   })).status,closedProposal.id);
   assert.equal(lateVoteStatus,409,'The authenticated participant browser cannot submit a late vote');
-  const lateCountStatus = await chair.evaluate(async id => (await fetch(`/api/assemblies/lisboa/admin/proposals/${id}/counts`,{
+  const lateCountStatus = await chair.evaluate(async ({id,room}) => (await fetch(`/api/assemblies/lisboa/admin/rooms/${room}/proposals/${id}/counts`,{
     method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({favor:99,against:0,abstain:0,version:2})
-  })).status,closedProposal.id);
+  })).status,{id:closedProposal.id,room:firstRoom});
   assert.equal(lateCountStatus,409,'The authenticated chair browser cannot change published physical counts');
   assert.deepEqual(await chair.locator('tfoot td').allTextContents(),['1','7','8']);
   await card(participant).locator('[data-action=result]').waitFor();
@@ -122,7 +139,7 @@ try {
   await chair.locator('#proposal-form button[type=submit]').click();
   await card(chair,retryTitle).locator('[data-action=open]').click(); await chair.locator('[data-action=confirm-open]').click();
   await participant.locator('#vote-form').waitFor();
-  const voteRoute='**/api/assemblies/lisboa/proposals/*/vote';
+  const voteRoute='**/api/rooms/proposals/*/vote';
   await participant.route(voteRoute,async route=>{await route.fetch();await route.abort('failed');},{times:1});
   await participant.locator('input[value=favor]').check(); await participant.locator('#vote-form button[type=submit]').click();
   await participant.getByText('A confirmação não chegou. Vê o estado ou confirma com a mesa antes de repetir.',{exact:true}).waitFor();
@@ -134,7 +151,7 @@ try {
   await chair.locator('[data-action=close]').click(); await chair.locator('[data-action=confirm-close]').click();
   await chair.getByRole('heading',{name:'Resultado da contagem',exact:true}).waitFor();
   assert.deepEqual(await chair.locator('tfoot td').allTextContents(),['1','0','1']);
-  const retryResult=await participant.evaluate(async()=>(await fetch('/api/assemblies/lisboa')).json());
+  const retryResult=await participant.evaluate(async()=>(await fetch('/api/rooms/session')).json());
   assert.deepEqual(retryResult.proposals.find(item=>item.title===retryTitle).digital,{favor:1,against:0,abstain:0});
   await otherTab.unroute('**/api/**'); await otherTab.reload();
   await otherTab.getByRole('heading',{name:'Ainda não há votação aberta.',exact:true}).waitFor();
@@ -148,12 +165,35 @@ try {
   const controls=await participant.locator('button:visible,select:visible,input:visible,nav a:visible').evaluateAll(elements=>elements.filter(element=>!element.disabled).map(element=>({name:element.textContent.trim(),height:(element.type==='radio'?element.closest('label'):element).getBoundingClientRect().height})));
   assert.deepEqual(controls.filter(item=>item.height<43),[],'Interactive targets are at least 44px high');
   assert.doesNotMatch(await participant.locator('body').innerText(),/\b(você|Escolha|Escreva|Introduza|Aguarde|Guarde)\b/,'Visible copy addresses the participant informally');
-  await participant.locator('#assembly-select').selectOption('porto');
-  await participant.locator('#room-form').waitFor();
+  // A new room in the same city starts empty; older room results remain available.
+  await chair.locator('[data-action=create-room]').click();
+  await chair.waitForFunction(previous => document.querySelector('#desk-room-select')?.value !== previous,firstRoom);
+  const secondRoom = await chair.locator('#desk-room-select').inputValue();
+  const secondCode = await chair.locator('#room-context strong').innerText();
+  assert.notEqual(secondCode,roomCode);
+  assert.equal(await chair.getByRole('heading',{name:title,exact:true}).count(),0);
+  await participant.locator('[data-action=leave-room]').click(); await participant.locator('#room-form').waitFor();
+  await participant.locator('#room-code').fill(secondCode); await participant.locator('#room-code').press('Enter');
+  await participant.locator('[data-action=new]').waitFor();
   assert.equal(await participant.getByRole('heading',{name:title,exact:true}).count(),0);
+  await chair.locator('#desk-room-select').selectOption(firstRoom);
+  await card(chair).locator('[data-action=result]').waitFor();
+  assert.notEqual(secondRoom,firstRoom);
+  const isolated = await participantContext.newPage(); await isolated.goto(origin);
+  await isolated.locator('[data-action=new]').waitFor();
+  assert.equal(await isolated.getByRole('heading',{name:title,exact:true}).count(),0,'Another tab resumes the same admitted room');
   await chair.locator('#assembly-select').selectOption('porto'); await chair.locator('#login-form').waitFor();
+  assert.equal(await chair.locator('#desk-room-select').isVisible(),false);
+  if (!remote) {
+    const porto = await store.getRoom('porto');
+    await participant.locator('[data-action=leave-room]').click(); await participant.locator('#room-form').waitFor();
+    await participant.locator('#room-code').fill(porto.code); await participant.locator('#room-code').press('Enter');
+    await participant.getByText('Assembleia do Porto · Sala',{exact:false}).waitFor();
+    assert.equal(await participant.locator('select').count(),0);
+    assert.equal(await participant.getByRole('heading',{name:title,exact:true}).count(),0);
+  }
   assert.deepEqual(errors,[]); assert.deepEqual(external,[]);
-  console.log(`${remote?'Hosted':'Local'} browser flow passed: isolated chair/participant contexts, concurrent tabs, refresh, lost response and idempotent retry, reconnect after closure, combined totals, city isolation, network requests and mobile sizes.`);
+  console.log(`${remote?'Hosted':'Local'} browser flow passed: isolated chair/participant contexts, concurrent tabs, refresh, lost response and idempotent retry, reconnect after closure, combined totals, code-only entry, mesa room creation, room/city isolation, network requests and mobile sizes.`);
 } catch(error) {
   for(const [index,context]of browser?.contexts().entries()||[]) for(const [pageIndex,page]of context.pages().entries()) {
     console.error(`Context ${index}, page ${pageIndex}:`, await page.evaluate(()=>({action:document.querySelector('#action-error')?.textContent,connection:document.querySelector('#connection-notice')?.textContent})));
