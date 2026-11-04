@@ -222,8 +222,7 @@ function showResult(id) {
   openModal(`<p class="eyebrow">${t('votacao_encerrada')}${state.testMode ? t('dados_ficticios') : ''}</p><h2 id="modal-title">${t('resultado_da_contagem')}</h2>${resultContent(proposal)}<div class="modal-actions"><button class="button primary" type="button" data-action="dismiss">${t('voltar_as_propostas')}</button></div>`);
 }
 function showAbout() {
-  const hosted = state.hosted || location.hostname.endsWith('.vercel.app');
-  openModal(`<h2 id="modal-title">${t('privacidade_e_limites')}</h2><div class="about-copy"><p>${t('privacy_stored')}</p><p>${t('privacy_ip')}</p>${hosted ? `<p>${t('hosting_notice')}</p>` : ''}<p>${t('privacy_room')}</p><p>${t('privacy_repeat')}</p><p class="notice">${t('esta_versao_ainda_nao_esta')}</p></div><div class="modal-actions"><button class="button primary" type="button" data-action="dismiss">${t('fechar')}</button></div>`);
+  openModal(`<h2 id="modal-title">${t('privacidade_e_limites')}</h2><div class="about-copy"><p>${t('privacy_stored')}</p><p>${t('privacy_ip')}</p><p>${t('privacy_room')}</p><p>${t('privacy_repeat')}</p><p class="notice">${t('esta_versao_ainda_nao_esta')}</p></div><div class="modal-actions"><button class="button primary" type="button" data-action="dismiss">${t('fechar')}</button></div>`);
 }
 
 document.addEventListener('click', async event => {
