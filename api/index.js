@@ -4,7 +4,7 @@ import { t } from '../public/i18n.js';
 
 let applicationPromise;
 async function application() {
-  for (const key of ['TURSO_DATABASE_URL','TURSO_AUTH_TOKEN','SESSION_SECRET','LISBOA_ADMIN_PASSWORD','PORTO_ADMIN_PASSWORD','LISBOA_ROOM_CODE','PORTO_ROOM_CODE']) {
+  for (const key of ['TURSO_DATABASE_URL','TURSO_AUTH_TOKEN','SESSION_SECRET','LISBOA_ADMIN_PASSWORD','PORTO_ADMIN_PASSWORD']) {
     if (!process.env[key]) throw new Error('Configuração de servidor incompleta.');
   }
   const store = await createStore(process.env.TURSO_DATABASE_URL, { authToken: process.env.TURSO_AUTH_TOKEN });

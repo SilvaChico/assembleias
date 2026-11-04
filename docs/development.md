@@ -20,7 +20,7 @@ GitHub Actions runs **Static checks**, **Data and API**, and **Browser flow** on
 
 ## Branches and merging
 
-Use a `codex/` branch and a pull request. `main` requires the three stable checks above against an up-to-date branch. The PR requirement also applies to administrators, force pushes and deletion are disabled, and the required number of human approvals is zero. Repository owners can still edit repository settings; branch protection is not an immutable policy outside the owner's control.
+Use a `codex/` branch and a pull request. Leave it open for the user to inspect; never merge automatically. Add screenshots to the PR description whenever possible, using fictitious local data without production codes or credentials. Production release needs a later explicit user instruction. `main` requires the three stable checks above against an up-to-date branch. The PR requirement also applies to administrators, force pushes and deletion are disabled, and the required number of human approvals is zero. Repository owners can still edit repository settings; branch protection is not an immutable policy outside the owner's control.
 
 The first `main` commit contained only GitHub's generated README. [Setup PR #1](https://github.com/SilvaChico/assembleias/pull/1) introduced the application and CI together after protection was enabled. All three required checks passed on the final PR head, and the PR was merged without an administrator bypass. A real direct-push probe by the repository owner was rejected with `GH006`, requiring a PR and all three checks.
 

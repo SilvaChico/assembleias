@@ -115,3 +115,11 @@ dialog::backdrop{background:#172a20aa}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 @media(max-width:420px){.wrap{width:calc(100% - 32px)}.header{padding-top:20px}h1{font-size:1.15rem}.brand-symbol{width:36px;height:36px}.entry-screen h1{font-size:1.45rem}.section-heading{gap:8px}.button{padding-inline:12px}.card-footer{flex-wrap:wrap;gap:4px 12px}.card-footer .button,.card-footer .text-button{margin-left:auto}.counting-section fieldset{gap:8px}.count-field input{padding-inline:8px}.voting-panel.active-vote{padding:16px 12px}dialog{padding:16px}.results-table{font-size:.8rem}.results-table th,.results-table td{padding-inline:2px}.entry-screen .footer{font-size:.75rem}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
+
+.room-context{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px 16px;margin-bottom:16px}
+.room-context p{margin:0;font-size:.875rem}
+.room-context strong{overflow-wrap:anywhere}
+.room-picker{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px}
+.room-picker label{margin:0}
+.room-picker select{flex:1;min-width:150px;width:auto}
+#room-management{margin-bottom:16px}

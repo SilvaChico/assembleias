@@ -9,18 +9,20 @@ const modal = $('#modal');
 let slug = new URLSearchParams(location.search).get('assembleia') === 'porto' ? 'porto' : 'lisboa';
 const view = /^\/mesa\/?$/.test(location.pathname) ? 'desk' : 'participant';
 if (location.hash === '#mesa') location.replace(`/mesa${location.search}`);
+let roomId = view === 'desk' ? new URLSearchParams(location.search).get('sala') : null;
+if (view === 'participant') $('.assembly-picker').remove();
 let state = { assembly: { name: t('assembleia_de_lisboa'), revision: -1 }, proposals: [], testMode: false };
 let admin = { authenticated: false, configured: false };
 let lastFocus, toastTimer, pollTimer, epoch = 0, panelKey = '', accessKey = '', dirtyCounts = false, sentVoteId = null;
 let loading = true, inFlight = false;
 let browserStorageAvailable = true;
 const VOTE_TTL = 24 * 60 * 60 * 1000;
-const voteKey = (id, city = slug) => `assembleias-voto-${city}-${id}`;
-function readVoteRecord(id, city = slug) {
+const voteKey = (id, room = roomId) => `assembleias-voto-${room}-${id}`;
+function readVoteRecord(id, room = roomId) {
   try {
-    const value = JSON.parse(localStorage.getItem(voteKey(id, city)) || 'null');
+    const value = JSON.parse(localStorage.getItem(voteKey(id, room)) || 'null');
     if (value && value.expires > Date.now() && /^[a-f0-9]{64}$/.test(value.token)) return value;
-    if (value) localStorage.removeItem(voteKey(id, city));
+    if (value) localStorage.removeItem(voteKey(id, room));
   } catch { browserStorageAvailable = false; }
   return null;
 }
@@ -28,12 +30,11 @@ function cleanVoteRecords() {
   try {
     for (const key of Object.keys(localStorage).filter(key => key.startsWith('assembleias-voto-'))) {
       let value; try { value = JSON.parse(localStorage.getItem(key)); } catch {}
-      if (!value || value.expires <= Date.now() || (key.startsWith(`assembleias-voto-${slug}-`) && key !== voteKey(active()?.id))) localStorage.removeItem(key);
+      if (!value || value.expires <= Date.now() || (key.startsWith(`assembleias-voto-${roomId}-`) && key !== voteKey(active()?.id))) localStorage.removeItem(key);
     }
     const key = 'assembleias-storage-check'; localStorage.setItem(key, '1'); localStorage.removeItem(key);
   } catch { browserStorageAvailable = false; }
 }
-const grants = new Map();
 // Room entry uses the SAME session cookie for everyone in the room, without individual identities.
 const find = id => state.proposals.find(proposal => proposal.id === Number(id));
 const active = () => state.proposals.find(proposal => proposal.status === 'open');
@@ -44,11 +45,16 @@ async function api(route = '', { method = 'GET', body, admin: needsAdmin = false
   const headers = {};
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   let response;
-  try { response = await fetch(`/api/assemblies/${city}${route}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), credentials: 'same-origin', signal: AbortSignal.timeout(10000) }); }
+  let path;
+  if (view === 'desk' || needsAdmin) {
+    const scoped = route.startsWith('/admin/proposals') ? route.replace('/admin/proposals', `/admin/rooms/${roomId}/proposals`) : route;
+    path = `/api/assemblies/${city}${scoped}`;
+  } else path = `/api/rooms${route || '/session'}`;
+  try { response = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), credentials: 'same-origin', signal: AbortSignal.timeout(10000) }); }
   catch { throw new Error(method === 'POST' ? t('a_confirmacao_nao_chegou_nao') : t('ligacao_ao_servidor_interrompida_os')); }
   const data = await response.json();
   if (!response.ok) {
-    if (response.status === 401 && !needsAdmin && route !== '/room/enter') grants.delete(city);
+    if (response.status === 401 && !needsAdmin && route !== '/enter') state.roomGranted = false;
     const error = new Error(data.error || t('nao_foi_possivel_concluir_o')); error.status = response.status; throw error;
   }
   return data;
@@ -56,23 +62,23 @@ async function api(route = '', { method = 'GET', body, admin: needsAdmin = false
 const post = (route, body = {}, admin = false) => api(route, { method: 'POST', body, admin });
 async function sendBrowserVote(id, choice) {
   if (!choices.some(item => item.key === choice)) throw new Error(t('escolha_a_favor_contra_ou'));
-  const city = slug;
+  const room = roomId;
   const send = async () => {
-    let record = readVoteRecord(id, city);
+    let record = readVoteRecord(id, room);
     if (!record) {
       const token = Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('');
       record = { token, expires: Date.now() + VOTE_TTL, sent: false };
-      try { localStorage.setItem(voteKey(id, city), JSON.stringify(record)); } catch { throw new Error(t('nao_foi_possivel_guardar_o')); }
+      try { localStorage.setItem(voteKey(id, room), JSON.stringify(record)); } catch { throw new Error(t('nao_foi_possivel_guardar_o')); }
       // Best-effort coordination where Web Locks are unavailable, such as HTTP over a LAN.
-      if (!navigator.locks) { await new Promise(resolve => setTimeout(resolve, 80)); record = readVoteRecord(id, city); }
+      if (!navigator.locks) { await new Promise(resolve => setTimeout(resolve, 80)); record = readVoteRecord(id, room); }
     }
     if (!record) throw new Error(t('o_estado_temporario_do_navegador'));
     if (record.sent) return { alreadyRecorded: true };
-    const result = await api(`/proposals/${id}/vote`, { method: 'POST', city, body: { choice, token: record.token } });
-    try { localStorage.setItem(voteKey(id, city), JSON.stringify({ ...record, sent: true })); } catch { /* The server consumed this token; never generate a replacement for this submission. */ }
+    const result = await api(`/proposals/${id}/vote`, { method: 'POST', body: { choice, token: record.token } });
+    try { localStorage.setItem(voteKey(id, room), JSON.stringify({ ...record, sent: true })); } catch { /* The server consumed this token; never generate a replacement for this submission. */ }
     return result;
   };
-  return navigator.locks ? navigator.locks.request(`assembleias-voto-${city}-${id}`, send) : send();
+  return navigator.locks ? navigator.locks.request(`assembleias-voto-${room}-${id}`, send) : send();
 }
 function announce(message) {
   clearTimeout(toastTimer);
@@ -87,24 +93,22 @@ function openModal(content) {
 modal.addEventListener('close', () => { if (modal.open) return; $('#modal-content').replaceChildren(); if (lastFocus?.isConnected) lastFocus.focus(); });
 
 async function refresh(force = false) {
-  const currentEpoch = epoch, city = slug;
+  const currentEpoch = epoch;
   try {
-    const results = await Promise.allSettled([api('', { city }), ...(view === 'desk' ? [api('/admin/session', { admin: true, city })] : [])]);
+    const incoming = view === 'desk'
+      ? await api(`/admin/session${roomId ? `?room=${encodeURIComponent(roomId)}` : ''}`, { admin: true })
+      : await api();
     if (currentEpoch !== epoch) return;
-    if (results[0].status === 'rejected') throw results[0].reason;
-    const incoming = results[0].value;
-    const hadRoom = grants.has(city);
-    if (incoming.roomGranted) grants.set(city, true); else grants.delete(city);
-    let nextAdmin = { ...admin };
-    if (results[1]) {
-      if (results[1].status === 'rejected') throw results[1].reason;
-      nextAdmin = results[1].value;
-      if (nextAdmin.authenticated) { incoming.proposals = nextAdmin.proposals; incoming.assembly = nextAdmin.assembly; }
-    }
-    if (incoming.assembly.revision < state.assembly.revision) return;
-    const changed = force || loading || hadRoom !== grants.has(city) || incoming.assembly.revision !== state.assembly.revision || nextAdmin.authenticated !== admin.authenticated;
+    const nextAdmin = view === 'desk' ? incoming : admin;
+    const nextRoom = incoming.room?.id || null;
+    const contextChanged = nextRoom !== roomId;
+    if (!contextChanged && incoming.assembly && incoming.assembly.revision < state.assembly.revision) return;
+    const changed = force || loading || contextChanged || incoming.roomGranted !== state.roomGranted ||
+      incoming.assembly?.revision !== state.assembly.revision || nextAdmin.authenticated !== admin.authenticated;
     const previousActive = active()?.id;
-    state = incoming; admin = nextAdmin; loading = false;
+    state = { ...incoming, proposals: incoming.proposals || [], assembly: incoming.assembly || { revision: -1 } };
+    admin = nextAdmin; roomId = nextRoom; loading = false;
+    if (contextChanged) { panelKey = ''; dirtyCounts = false; sentVoteId = null; if (modal.open) modal.close(); }
     cleanVoteRecords();
     if (active() && readVoteRecord(active().id)?.sent) sentVoteId = active().id;
     if (sentVoteId && sentVoteId !== active()?.id) sentVoteId = null;
@@ -118,15 +122,24 @@ async function refresh(force = false) {
 }
 
 function render(force = false) {
-  const locked = view === 'desk' ? !admin.authenticated : !grants.has(slug);
+  const locked = view === 'desk' ? !admin.authenticated : !state.roomGranted;
   document.body.classList.toggle('entry-screen', locked);
-  $('#assembly-select').value = slug;
+  if ($('#assembly-select')) { $('#assembly-select').value = slug; $('.assembly-picker').hidden = false; }
   $('#desk-label').hidden = view !== 'desk';
   $('#mode-label').textContent = state.testMode ? t('modo_de_teste_dados_ficticios') : t('versao_local_em_desenvolvimento');
   $('#workspace').hidden = locked;
   $('#access-panel').hidden = !locked;
   $('#desk-notice').hidden = !isDesk();
   $('#desk-notice').innerHTML = isDesk() ? `<strong>${t('mesa_de')} ${slug === 'lisboa' ? t('lisboa') : t('porto')}</strong><button class="text-button" type="button" data-action="logout">${t('terminar_sessao')}</button>` : '';
+  $('#room-context').hidden = locked;
+  $('#room-context').innerHTML = locked ? '' : `<p>${escape(state.assembly.name)} · ${t('room_label')} <strong>${escape(state.room.code)}</strong></p>${isDesk() ? '' : `<button class="text-button" type="button" data-action="leave-room">${t('leave_room')}</button>`}`;
+  $('#room-management').hidden = !isDesk();
+  const roomOptions = (state.rooms || []).map(room => `<option value="${escape(room.id)}" ${room.id === roomId ? 'selected' : ''}>${room.id === room.assembly ? `${t('legacy_room')} · ` : ''}${escape(room.code)}</option>`).join('');
+  const roomManagementKey = `${slug}:${roomId}:${roomOptions}`;
+  if (isDesk() && $('#room-management').dataset.key !== roomManagementKey) {
+    $('#room-management').dataset.key = roomManagementKey;
+    $('#room-management').innerHTML = `<div class="room-picker"><label for="desk-room-select">${t('room_label')}</label><select id="desk-room-select">${roomOptions}</select><button class="text-button" type="button" data-action="create-room">${t('create_room')}</button></div><p class="field-hint">${t('share_room_code')}</p>`;
+  }
   const nextAccessKey = `${view}:${slug}:${admin.configured}:${locked}`;
   if (nextAccessKey !== accessKey) {
     accessKey = nextAccessKey;
@@ -137,7 +150,7 @@ function render(force = false) {
   $('#proposals-label').textContent = active() ? t('outras_propostas') : t('propostas');
   $('#proposals').innerHTML = locked ? '' : proposals.length ? proposals.map(proposal => `<article class="proposal-card" aria-labelledby="proposal-${proposal.id}"><div class="card-top"><span class="proposal-number">#${proposal.id}</span><span class="status ${proposal.status}">${statusText[proposal.status]}</span></div><div class="proposal-body"><h3 id="proposal-${proposal.id}">${escape(proposal.title)}</h3><p>${escape(proposal.description)}</p></div><div class="card-footer"><span class="support-count"><strong>${number(proposal.supports)}</strong> ${proposal.supports === 1 ? t('apoio_a_discussao') : t('apoios_a_discussao')}</span>${cardAction(proposal)}</div></article>`).join('') : active() ? '' : `<p class="notice">${t('esta_assembleia_ainda_nao_tem')}</p>`;
   const proposal = active();
-  const nextKey = `${view}:${slug}:${locked}:${proposal?.id}:${sentVoteId}:${state.testMode}:${proposal?.countVersion}`;
+  const nextKey = `${view}:${slug}:${roomId}:${locked}:${proposal?.id}:${sentVoteId}:${state.testMode}:${proposal?.countVersion}`;
   if (force || (nextKey !== panelKey && !(dirtyCounts && proposal?.id === Number($('#count-form')?.dataset.id) && isDesk()))) {
     panelKey = nextKey; dirtyCounts = false;
     if (locked) $('#voting-panel').replaceChildren(); else renderVotingPanel();
@@ -149,7 +162,7 @@ function cardAction(proposal) {
   return `<button id="support-${proposal.id}" class="button small" type="button" data-action="support" data-id="${proposal.id}">${t('apoiar_discussao')}<span class="sr-only"> ${t('de')} ${escape(proposal.title)}</span></button>`;
 }
 function roomForm() {
-  return `<form id="room-form" novalidate><label for="room-code">${t('codigo_anunciado_nesta_sala')}</label><input id="room-code" name="code" type="password" autocomplete="off" required maxlength="128" aria-describedby="room-error"><p class="form-error" id="room-error" role="alert"></p><button class="button primary full" type="submit">${t('entrar_na_sala')}</button></form>`;
+  return `<form id="room-form" novalidate><label for="room-code">${t('codigo_anunciado_nesta_sala')}</label><input id="room-code" name="code" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" required maxlength="128" aria-describedby="entry-privacy room-error"><p id="entry-privacy" class="field-hint">${t('entry_privacy')}</p><p class="form-error" id="room-error" role="alert"></p><button class="button primary full" type="submit">${t('entrar_na_sala')}</button></form>`;
 }
 function loginForm() {
   return `<form id="login-form" novalidate><input type="hidden" name="username" value="mesa"><label for="login-password">${t('palavra_passe_da_mesa')}</label><input id="login-password" name="password" type="password" autocomplete="current-password" required maxlength="1024" aria-describedby="login-error"><p id="login-error" class="form-error" role="alert"></p><button class="button primary full" type="submit" ${!admin.configured ? 'disabled' : ''}>${t('entrar_na_mesa')}</button></form>${!loading && !admin.configured ? `<p class="panel-note">${t('a_palavra_passe_desta_mesa')}</p>` : ''}`;
@@ -171,8 +184,8 @@ function deskVote(proposal) {
   return `<p class="panel-note">${t('os_totais_digitais_so_ficam')}</p><div class="counting-section"><h3>${t('contagem_presencial_publica')}</h3><p>${t('a_mesa_conta_os_cartoes')}</p><form id="count-form" data-id="${proposal.id}" data-version="${proposal.countVersion}" novalidate><fieldset><legend class="sr-only">${t('totais_de_votos_presenciais')}</legend>${choices.map(({ key, label }) => `<div class="count-field"><label for="count-${key}">${label}</label><input type="number" min="0" max="1000000" step="1" inputmode="numeric" id="count-${key}" name="${key}" value="${proposal.inPerson[key]}" required aria-describedby="count-hint count-error"></div>`).join('')}</fieldset><p class="panel-note" id="count-hint">${t('inteiros_de_0_a_1')}</p><p id="count-error" class="form-error on-dark" role="alert"></p><button class="button outline-light full" id="save-counts" type="submit">${proposal.inPersonRecorded ? t('atualizar_contagem') : t('guardar_contagem')}</button><p class="count-status" id="count-status" role="status">${proposal.inPersonRecorded ? t('contagem_guardada_votos_presenciais', { v0: number(countTotal(proposal.inPerson)) }) : t('contagem_por_confirmar_guarde_tambem')}</p><button class="text-button" type="button" data-action="reload-counts">${t('descartar_rascunho_e_reler_contagem')}</button></form></div><button class="button light full" type="button" data-action="close" data-id="${proposal.id}">${t('fechar_votacao_e_publicar')}</button><p class="panel-note">${t('a_publicacao_apresenta_a_contagem')}</p>`;
 }
 function showNewProposal() {
-  if (!isDesk() && !grants.has(slug)) { announce(t('entre_com_o_codigo_de')); $('#voting-title')?.focus(); return; }
-  openModal(`<p class="eyebrow">${t('uma_ideia_para')} ${slug === 'lisboa' ? t('lisboa') : t('porto')}</p><h2 id="modal-title">${t('nova_proposta')}</h2><p class="modal-intro">${t('escreva_o_que_propoe_e')}</p><form id="proposal-form" novalidate><label for="proposal-title">${t('titulo')} <span>${t('obrigatorio')}</span></label><input id="proposal-title" name="title" minlength="8" maxlength="120" required aria-describedby="title-hint proposal-error"><p class="field-hint" id="title-hint">${t('de_8_a_120_caracteres')}</p><label for="proposal-description">${t('descricao')} <span>${t('obrigatoria')}</span></label><textarea id="proposal-description" name="description" rows="4" minlength="20" maxlength="1200" required aria-describedby="description-hint proposal-error"></textarea><p class="field-hint" id="description-hint">${t('de_20_a_1200_caracteres')}</p><p id="proposal-error" class="form-error" role="alert"></p><div class="modal-actions"><button class="button" type="button" data-action="dismiss">${t('cancelar')}</button><button class="button primary" type="submit">${t('submeter_proposta')}</button></div></form>`);
+  if (!isDesk() && !state.roomGranted) { announce(t('entre_com_o_codigo_de')); $('#voting-title')?.focus(); return; }
+  openModal(`<p class="eyebrow">${t('uma_ideia_para')} ${t('room_label')} ${escape(state.room?.code || '')}</p><h2 id="modal-title">${t('nova_proposta')}</h2><p class="modal-intro">${t('escreva_o_que_propoe_e')}</p><form id="proposal-form" novalidate><label for="proposal-title">${t('titulo')} <span>${t('obrigatorio')}</span></label><input id="proposal-title" name="title" minlength="8" maxlength="120" required aria-describedby="title-hint proposal-error"><p class="field-hint" id="title-hint">${t('de_8_a_120_caracteres')}</p><label for="proposal-description">${t('descricao')} <span>${t('obrigatoria')}</span></label><textarea id="proposal-description" name="description" rows="4" minlength="20" maxlength="1200" required aria-describedby="description-hint proposal-error"></textarea><p class="field-hint" id="description-hint">${t('de_20_a_1200_caracteres')}</p><p id="proposal-error" class="form-error" role="alert"></p><div class="modal-actions"><button class="button" type="button" data-action="dismiss">${t('cancelar')}</button><button class="button primary" type="submit">${t('submeter_proposta')}</button></div></form>`);
 }
 function showResult(id) {
   const proposal = find(id);
@@ -181,7 +194,8 @@ function showResult(id) {
   openModal(`<p class="eyebrow">${t('votacao_encerrada')}${state.testMode ? t('dados_ficticios') : ''}</p><h2 id="modal-title">${t('resultado_da_contagem')}</h2><p class="result-proposal">${escape(proposal.title)}</p><div class="result-total"><strong>${number(digital + inPerson)}</strong><span>${t('votos_no_total')}</span></div><table class="results-table"><caption>${t('votos_por_opcao_e_via')}</caption><thead><tr><th scope="col">${t('opcao')}</th><th scope="col">${t('digital')}</th><th scope="col">${t('presencial')}</th><th scope="col">${t('total')}</th></tr></thead><tbody>${choices.map(({ key, label }) => `<tr><th scope="row">${label}</th><td>${number(proposal.digital[key])}</td><td>${number(proposal.inPerson[key])}</td><td><strong>${number(proposal.digital[key] + proposal.inPerson[key])}</strong></td></tr>`).join('')}</tbody><tfoot><tr><th scope="row">${t('total')}</th><td>${number(digital)}</td><td>${number(inPerson)}</td><td>${number(digital + inPerson)}</td></tr></tfoot></table><p class="field-hint">${t('a_mesa_introduz_a_contagem')}</p><div class="notice">${t('esta_contagem_nao_determina_aprovacao')}</div><div class="modal-actions"><button class="button primary" type="button" data-action="dismiss">${t('voltar_as_propostas')}</button></div>`);
 }
 function showAbout() {
-  openModal(`<p class="eyebrow">${t('versao_local_em_desenvolvimento')}</p><h2 id="modal-title">${t('funcionamento_e_limites')}</h2><div class="about-copy"><p>${t('lisboa_e_porto_tem_propostas')}</p><h3>${t('o_que_fica_guardado')}</h3><p>${t('propostas_apoios_agregados_e_contagens')}</p><p>${t('a_aplicacao_nao_usa_geolocalizacao')}</p>${state.hosted ? `<p>${t('hosting_notice')}</p>` : ''}<h3>${t('acesso_de_participantes')}</h3><p>${t('o_codigo_de_sala_e')}</p><h3>${t('restricao_no_mesmo_navegador')}</h3><p>${t('ao_votar_guarda_se_localmente')}</p><p>${t('outros_navegadores_janelas_privadas_apagar')}</p>${view === 'desk' ? `<h3>${t('acesso_da_mesa_2')}</h3><p>${t('a_palavra_passe_e_verificada')}</p>` : ''}<h3>${t('voto_presencial_publico')}</h3><p>${t('a_assembleia_gere_os_cartoes')}</p><p class="notice">${t('esta_versao_ainda_nao_esta')}</p></div><div class="modal-actions"><button class="button primary" type="button" data-action="dismiss">${t('fechar')}</button></div>`);
+  const hosted = state.hosted || location.hostname.endsWith('.vercel.app');
+  openModal(`<h2 id="modal-title">${t('privacidade_e_limites')}</h2><div class="about-copy"><p>${t('privacy_stored')}</p><p>${t('privacy_ip')}</p>${hosted ? `<p>${t('hosting_notice')}</p>` : ''}<p>${t('privacy_room')}</p><p>${t('privacy_repeat')}</p><p class="notice">${t('esta_versao_ainda_nao_esta')}</p></div><div class="modal-actions"><button class="button primary" type="button" data-action="dismiss">${t('fechar')}</button></div>`);
 }
 
 document.addEventListener('click', async event => {
@@ -193,8 +207,17 @@ document.addEventListener('click', async event => {
     if (action === 'new') showNewProposal();
     if (action === 'about') showAbout();
     if (action === 'result') showResult(id);
+    if (action === 'leave-room') {
+      inFlight = true; await post('/leave'); await refresh(true); $('#room-code')?.focus();
+    }
+    if (action === 'create-room') {
+      if (dirtyCounts && !confirm(t('switch_room_discard_counts'))) return;
+      inFlight = true;
+      const result = await post('/admin/rooms', {}, true);
+      roomId = result.room.id; await changeContext(); announce(t('room_created'));
+    }
     if (action === 'support') {
-      if (!grants.has(slug)) { announce(t('entre_com_o_codigo_de_2')); $('#voting-title')?.focus(); return; }
+      if (!state.roomGranted) { announce(t('entre_com_o_codigo_de_2')); $('#voting-title')?.focus(); return; }
       inFlight = true; button.disabled = true;
       await post(`/proposals/${id}/support`); await refresh();
       document.getElementById(`support-${id}`)?.focus(); announce(t('apoio_a_discussao_acrescentado_nao'));
@@ -249,8 +272,8 @@ document.addEventListener('submit', async event => {
   try {
     if (form.id === 'login-form') { await post('/admin/login', data, true); form.elements.password.value = ''; await refresh(true); announce(t('sessao_da_mesa_iniciada_nesta')); $('#voting-title')?.focus(); }
     if (form.id === 'room-form') {
-      await post('/room/enter', data); form.elements.code.value = '';
-      grants.set(slug, true); await refresh(true); announce(t('entrada_na_sala_confirmada_o')); $('#voting-title')?.focus();
+      await post('/enter', data); form.elements.code.value = '';
+       await refresh(true); announce(t('entrada_na_sala_confirmada_o')); $('#voting-title')?.focus();
     }
     if (form.id === 'proposal-form') {
       const result = await post(isDesk() ? '/admin/proposals' : '/proposals', data, isDesk());
@@ -277,16 +300,26 @@ document.addEventListener('submit', async event => {
 
 document.addEventListener('input', event => { if (event.target.closest('#count-form')) { dirtyCounts = true; $('#count-status').textContent = t('alteracoes_por_guardar_guarde_antes'); } });
 async function changeContext() {
+  if (view === 'desk') {
+    const url = new URL(location.href);
+    if (roomId) url.searchParams.set('sala', roomId); else url.searchParams.delete('sala');
+    history.replaceState(null, '', url);
+  }
   epoch++; panelKey = ''; dirtyCounts = false; sentVoteId = null; loading = true;
   admin = { authenticated: false, configured: false }; state = { ...state, proposals: [], assembly: { name: slug === 'lisboa' ? t('assembleia_de_lisboa') : t('assembleia_do_porto'), revision: -1 } };
   render(true); await refresh(true); $('#main').focus();
 }
-$('#assembly-select').addEventListener('change', async event => {
+$('#assembly-select')?.addEventListener('change', async event => {
   if (dirtyCounts && !confirm(t('mudar_de_assembleia_e_descartar'))) { event.target.value = slug; return; }
-  slug = event.target.value; const url = new URL(location.href); url.searchParams.set('assembleia', slug); history.replaceState(null, '', url); await changeContext();
+  slug = event.target.value; roomId = null; const url = new URL(location.href); url.searchParams.set('assembleia', slug); url.searchParams.delete('sala'); history.replaceState(null, '', url); await changeContext();
+});
+document.addEventListener('change', async event => {
+  if (event.target.id !== 'desk-room-select') return;
+  if (dirtyCounts && !confirm(t('switch_room_discard_counts'))) { event.target.value = roomId; return; }
+  roomId = event.target.value; await changeContext();
 });
 window.addEventListener('beforeunload', event => { if (dirtyCounts) { event.preventDefault(); event.returnValue = ''; } });
-window.addEventListener('storage', event => { if (event.key?.startsWith(`assembleias-voto-${slug}-`)) { if (active() && readVoteRecord(active().id)?.sent) sentVoteId = active().id; render(); } });
+window.addEventListener('storage', event => { if (event.key?.startsWith(`assembleias-voto-${roomId}-`)) { if (active() && readVoteRecord(active().id)?.sent) sentVoteId = active().id; render(); } });
 async function poll() { await refresh(); pollTimer = setTimeout(poll, 2000); }
 document.addEventListener('visibilitychange', () => { clearTimeout(pollTimer); if (!document.hidden) poll(); });
 render(true);

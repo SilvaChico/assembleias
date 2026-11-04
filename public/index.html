@@ -17,13 +17,15 @@
     <p id="desk-label" class="eyebrow" data-i18n="mesa" hidden></p>
   </header>
   <main id="main" class="wrap" tabindex="-1">
-    <div class="assembly-picker">
+    <div class="assembly-picker" hidden>
       <label for="assembly-select" data-i18n="assembleia"></label>
       <select id="assembly-select"><option value="lisboa" data-i18n="lisboa"></option><option value="porto" data-i18n="porto"></option></select>
     </div>
     <div id="connection-notice" class="notice error-notice" role="status" hidden></div>
     <div id="access-panel"></div>
     <div id="desk-notice" class="desk-notice" hidden></div>
+    <div id="room-management" hidden></div>
+    <div id="room-context" class="room-context" hidden></div>
     <div id="workspace" hidden>
       <section id="voting-panel" aria-live="polite"></section>
       <section aria-labelledby="proposals-title" class="proposals-section">

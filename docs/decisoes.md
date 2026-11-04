@@ -65,3 +65,20 @@ The user rejected the warm-paper dashboard and requested a much smaller, informa
 Proposal creation asks for title and description only. The server accepts a missing category, stores an empty value for new category-free proposals, and keeps historical categories and compatibility with older clients. There is no destructive schema migration. The active proposal appears once, above the other proposals; closure and results remain final.
 
 The user viewed three original pixel tent marks, rejected pixelation, then viewed smooth original SVG options D/E/F and explicitly chose **D — Tenda clássica**. That mark is used for both logo and favicon. No artwork, fonts, code or other resources were copied from Acampada Pixel. The layout uses a limited green palette, flat rows, system typography and text actions, with no new dependencies. Portuguese copy addresses people informally as *tu*.
+
+
+## Room-code-only participation — supersedes the city entry flow
+
+The user confirmed that participants and proposal authors enter only a shared **room code**, without choosing Lisboa or Porto or using another login. After admission, show the room context. `/mesa` still selects the city and verifies its existing city password, then selects an existing room or creates and opens a new one and shares its code. The classic smooth tent D and small informal Portuguese interface remain.
+
+Cities remain the mesa authentication boundary. A small persistent `rooms` table owns proposals through `proposals.room`; globally unique, case-insensitive codes resolve to exactly one room. Creating a room opens participation immediately, without scheduling or a room-closing lifecycle. One proposal vote can be active **per room**, with independent rooms/cities. Submission, discussion support, three vote choices, manual raised-card totals, final closure and digital/physical/combined results keep their existing semantics. Cards remain outside the application.
+
+The additive write-transaction migration maps every existing proposal to its city's legacy room and preserves all other columns, categories, results, active receipts and mesa sessions. Existing non-conflicting configured codes are imported once; missing, invalid or ambiguous legacy codes get distinct generated codes visible to the mesa. Saved room codes remain stable across restarts/environment changes. Participants must re-enter after upgrading the old city-cookie flow. No stored proposal/result or password is reset; password lifecycle work is explicitly outside this task.
+
+The participant API now requires the common room cookie for reads as well as writes, scopes every proposal action to that room, and does not disclose other room codes. The former public city read endpoint is retired. Shared codes and the browser repeat restriction still prove neither presence nor one-person-one-vote. No accounts, participant identity/history, geolocation or new external service were added.
+
+The user also asked for shorter privacy wording. Entry says “Não precisas de conta nem de indicar quem és.” and retains the details link. A separate read-only audit of main `d53b748` found no automatic application reading/storage/logging of participant IPs or forwarding of browser headers to Turso. The copy states that the application does not record participant IPs or send them to the database; Vercel receives the browser connection IP, and only the server contacts Turso. Provider log/retention guarantees and absolute anonymity remain unverified and are not promised.
+
+### Review workflow — latest user instruction
+
+Leave PRs **open and unmerged** for the user to inspect. Never merge automatically or publish this task to production. Add screenshots to PR descriptions whenever possible, showing fictitious local data and no production codes or credentials. A later explicit instruction is needed to merge/release. This supersedes the earlier authorization for automatic protected merging/deployment.
