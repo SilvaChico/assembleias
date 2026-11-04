@@ -109,7 +109,8 @@ test('API: assembly-scoped chair access, room code, origin and private files', a
   const id = (await store.submit('lisboa', proposal)).id;
   assert.equal((await request(`/api/assemblies/lisboa/admin/proposals/${id}/open`, { body: {} })).status, 401);
   assert.equal((await request('/api/assemblies/lisboa/admin/login', { body: { username: 'mesa', password: 'test-porto-password' } })).status, 401);
-  const login = await request('/api/assemblies/lisboa/admin/login', { body: { username: 'mesa', password: 'test-lisboa-password' } });
+  const temporary = await request('/api/assemblies/lisboa/admin/login', { body: { username: 'mesa', password: 'test-lisboa-password' } });
+  const login = await request('/api/assemblies/lisboa/admin/password', { cookie: temporary.cookie, body: { password: 'chosen-lisboa-password', confirmation: 'chosen-lisboa-password' } });
   assert.equal(login.status, 200); assert.match(login.headers.get('set-cookie'), /HttpOnly; SameSite=Strict; Path=\/api\/assemblies\/lisboa\/admin/);
   assert.equal((await request('/api/assemblies/porto/admin/session', { cookie: login.cookie })).data.authenticated, false);
   assert.equal((await request(`/api/assemblies/lisboa/admin/proposals/${id}/open`, { body: {}, cookie: login.cookie, origin: 'http://other.invalid' })).status, 403);
@@ -168,7 +169,8 @@ test('valid room entries are not capped by the shared failed-code limit', async 
 
 test('room codes resolve globally and room/city boundaries protect every proposal action', async t => {
   const { store, request } = await fixture(t);
-  const login = await request('/api/assemblies/lisboa/admin/login', { body: { username: 'mesa', password: 'test-lisboa-password' } });
+  const temporary = await request('/api/assemblies/lisboa/admin/login', { body: { username: 'mesa', password: 'test-lisboa-password' } });
+  const login = await request('/api/assemblies/lisboa/admin/password', { cookie: temporary.cookie, body: { password: 'chosen-lisboa-password', confirmation: 'chosen-lisboa-password' } });
   assert.equal((await request('/api/assemblies/lisboa/admin/rooms', { body: {} })).status, 401);
   const created = await request('/api/assemblies/lisboa/admin/rooms', { body: {}, cookie: login.cookie });
   assert.equal(created.status, 201);

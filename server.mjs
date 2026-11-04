@@ -3,8 +3,9 @@ import { createServer } from 'node:http';
 import { readFile, mkdir, chmod } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { randomBytes, scryptSync, timingSafeEqual, createHash, createHmac } from 'node:crypto';
+import { randomBytes, timingSafeEqual, createHash, createHmac } from 'node:crypto';
 import { createStore, AppError } from './lib/store.mjs';
+import { hashPassword, verifyPassword, passwordInput, newPasswordInput } from './lib/passwords.mjs';
 
 const files = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -24,22 +25,21 @@ const equal = (a, b) => typeof a === 'string' && typeof b === 'string' && timing
 
 export async function createApplication({ store, passwords = {}, roomCodes = {}, origin = 'http://127.0.0.1:4173', allowedOrigins = [origin], testMode = false, sessionMs = SESSION_MS, sessionSecret = randomBytes(32).toString('hex') } = {}) {
   store ||= await createStore();
-  const passwordHashes = new Map(), credentialBindings = new Map();
   const roomSecret = sessionSecret;
+  const credentialBinding = (slug, version) => createHmac('sha256', sessionSecret).update(`mesa-v2:${slug}:${version}`).digest('hex');
   await store.initializeRooms(roomCodes);
   for (const slug of ['lisboa', 'porto']) {
-    if (passwords[slug]?.length >= 12) {
-      const salt = randomBytes(16);
-      passwordHashes.set(slug, { salt, hash: scryptSync(passwords[slug], salt, 32) });
-      credentialBindings.set(slug, createHmac('sha256', sessionSecret).update(`${slug}:${passwords[slug]}`).digest('hex'));
+    if (!await store.getCredential(slug) && passwordInput(passwords[slug]) && passwords[slug].length >= 12) {
+      await store.initializeCredential(slug, await hashPassword(passwords[slug]), randomBytes(16).toString('hex'));
     }
   }
   const sessionFor = async (request, slug) => {
     const token = request.headers.cookie?.split(';').map(value => value.trim()).find(value => value.startsWith(`mesa_${slug}=`))?.slice(`mesa_${slug}=`.length);
     if (!token) return null;
-    const session = await store.getSession(hashToken(token));
-    if (!session || session.slug !== slug || !equal(session.binding, credentialBindings.get(slug))) return null;
-    return session;
+    const tokenHash = hashToken(token), session = await store.getSession(tokenHash);
+    const credential = await store.getCredential(slug);
+    if (!session || session.slug !== slug || !credential || !equal(session.binding, credentialBinding(slug, credential.version))) return null;
+    return { ...session, tokenHash, version: credential.version, setupRequired: Boolean(credential.must_change) };
   };
   const cookie = (slug, token, maxAge) => `mesa_${slug}=${token}; HttpOnly; SameSite=Strict; Path=/api/assemblies/${slug}/admin; Max-Age=${maxAge}${origin.startsWith('https:') ? '; Secure' : ''}`;
   const readJson = async request => {
@@ -137,49 +137,64 @@ export async function createApplication({ store, passwords = {}, roomCodes = {},
       const slug = match[1];
       let route = match[2] || '', roomId = slug;
       if (route === '/admin/session' && request.method === 'GET') {
-        const authenticated = Boolean(await sessionFor(request, slug));
+        const session = await sessionFor(request, slug);
+        const authenticated = Boolean(session && !session.setupRequired);
         let snapshot = {};
         if (authenticated) {
           roomId = new URL(request.url, origin).searchParams.get('room') || slug;
           if ((await store.getRoom(roomId)).assembly !== slug) throw new AppError(t('room_not_found'), 404);
           snapshot = { ...await store.snapshot(roomId, { admin: true }), rooms: await store.listRooms(slug) };
         }
-        send(response, 200, { authenticated, configured: passwordHashes.has(slug), testMode, hosted: store.remote, ...snapshot }); return;
+        send(response, 200, { authenticated, setupRequired: Boolean(session?.setupRequired), configured: Boolean(await store.getCredential(slug)), testMode, hosted: store.remote, ...snapshot }); return;
       }
       if (request.method !== 'POST') throw new AppError(t('metodo_nao_permitido'), 405);
       assertOrigin(request);
       const data = await readJson(request);
       if (route === '/admin/login') {
-        const configured = passwordHashes.get(slug);
+        const configured = await store.getCredential(slug);
         if (!configured) throw new AppError(t('a_palavra_passe_desta_mesa_2'), 503);
         await store.reserveAttempt(slug, 'login', 10);
-        const validType = typeof data.password === 'string' && data.password.length <= 1024;
-        const candidate = scryptSync(validType ? data.password : '', configured.salt, 32);
-        if (!validType || !timingSafeEqual(candidate, configured.hash) || data.username !== 'mesa') throw new AppError(t('nome_de_utilizador_ou_palavra'), 401);
+        if (!await verifyPassword(data.password, configured.password_hash) || data.username !== 'mesa') throw new AppError(t('nome_de_utilizador_ou_palavra'), 401);
         const token = randomBytes(32).toString('hex');
-        await store.saveSession(hashToken(token), slug, Date.now() + sessionMs, credentialBindings.get(slug));
-        response.setHeader('Set-Cookie', cookie(slug, token, Math.ceil(sessionMs / 1000)));
-        send(response, 200, { authenticated: true }); return;
+        const duration = configured.must_change ? Math.min(sessionMs, 10 * 60 * 1000) : sessionMs;
+        await store.saveSession(hashToken(token), slug, Date.now() + duration, credentialBinding(slug, configured.version), configured.version);
+        response.setHeader('Set-Cookie', cookie(slug, token, Math.ceil(duration / 1000)));
+        send(response, 200, { authenticated: !configured.must_change, setupRequired: Boolean(configured.must_change) }); return;
       }
       if (route.startsWith('/admin/')) {
-        if (!await sessionFor(request, slug)) throw new AppError(t('entre_na_mesa_desta_assembleia'), 401);
+        const session = await sessionFor(request, slug);
+        if (!session) throw new AppError(t('entre_na_mesa_desta_assembleia'), 401);
         if (route === '/admin/logout') {
           const token = request.headers.cookie?.split(';').map(value => value.trim()).find(value => value.startsWith(`mesa_${slug}=`))?.split('=')[1];
           if (token) await store.deleteSession(hashToken(token));
           response.setHeader('Set-Cookie', cookie(slug, '', 0));
           send(response, 200, { authenticated: false }); return;
         }
-        if (route === '/admin/rooms') { send(response, 201, { room: await store.createRoom(slug) }); return; }
+        if (route === '/admin/password') {
+          await store.reserveAttempt(slug, 'password', 10);
+          const credential = await store.getCredential(slug);
+          if (credential.version !== session.version) throw new AppError(t('password_changed_elsewhere'), 409);
+          if (!session.setupRequired && !await verifyPassword(data.currentPassword, credential.password_hash)) throw new AppError(t('password_current_wrong'), 401);
+          if (!newPasswordInput(data.password)) throw new AppError(t('password_length'));
+          if (data.password !== data.confirmation) throw new AppError(t('password_mismatch'));
+          if (await verifyPassword(data.password, credential.password_hash)) throw new AppError(t('password_must_differ'));
+          const hash = await hashPassword(data.password), version = randomBytes(16).toString('hex'), token = randomBytes(32).toString('hex');
+          await store.replaceCredential(session, hash, version, { hash: hashToken(token), expires: Date.now() + sessionMs, binding: credentialBinding(slug, version) });
+          response.setHeader('Set-Cookie', cookie(slug, token, Math.ceil(sessionMs / 1000)));
+          send(response, 200, { authenticated: true, setupRequired: false }); return;
+        }
+        if (session.setupRequired) throw new AppError(t('password_setup_required'), 403);
+        if (route === '/admin/rooms') { send(response, 201, { room: await store.createRoom(slug, session) }); return; }
         const roomRoute = route.match(/^\/admin\/rooms\/([^/]+)(\/.*)$/);
         if (roomRoute) { roomId = roomRoute[1]; route = `/admin${roomRoute[2]}`; }
         if ((await store.getRoom(roomId)).assembly !== slug) throw new AppError(t('room_not_found'), 404);
-        if (route === '/admin/proposals') { send(response, 201, await store.submit(roomId, data)); return; }
+        if (route === '/admin/proposals') { send(response, 201, await store.submit(roomId, data, session)); return; }
         const action = route.match(/^\/admin\/proposals\/(\d+)\/(open|counts|close)$/);
         if (!action) throw new AppError(t('acao_nao_encontrada'), 404);
         const id = Number(action[1]);
-        if (action[2] === 'open') await store.open(roomId, id);
-        if (action[2] === 'counts') await store.saveCounts(roomId, id, data);
-        if (action[2] === 'close') await store.closeVoting(roomId, id, data);
+        if (action[2] === 'open') await store.open(roomId, id, session);
+        if (action[2] === 'counts') await store.saveCounts(roomId, id, data, session);
+        if (action[2] === 'close') await store.closeVoting(roomId, id, data, session);
         send(response, 200, { ok: true }); return;
       }
       throw new AppError(t('recurso_nao_encontrado'), 404);

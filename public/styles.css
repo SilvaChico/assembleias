@@ -49,7 +49,7 @@ input[readonly]{background:var(--wash)}
 .voting-reference{font-weight:500}
 .notice{padding:12px 14px;background:var(--wash);border-left:3px solid var(--accent);margin:0 0 16px}
 .error-notice{background:var(--error-bg);border-color:var(--error);color:var(--error)}
-.desk-notice{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
+.desk-notice{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
 .voting-panel{padding:20px 0;border-block:2px solid var(--accent);margin-bottom:28px}
 .voting-panel.active-vote{background:var(--wash);padding:20px;border:0;border-left:4px solid var(--accent)}
 .voting-description{white-space:pre-line}
@@ -123,3 +123,6 @@ dialog::backdrop{background:#172a20aa}
 .room-picker label{margin:0}
 .room-picker select{flex:1;min-width:150px;width:auto}
 #room-management{margin-bottom:16px}
+
+.desk-notice>div{display:flex;flex-wrap:wrap;gap:8px}
+#password-form input{margin-bottom:10px}

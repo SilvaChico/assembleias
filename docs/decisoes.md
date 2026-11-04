@@ -82,3 +82,9 @@ The user also asked for shorter privacy wording. Entry says “Não precisas de 
 ### Review workflow — latest user instruction
 
 Leave PRs **open and unmerged** for the user to inspect. Never merge automatically or publish this task to production. Add screenshots to PR descriptions whenever possible, showing fictitious local data and no production codes or credentials. A later explicit instruction is needed to merge/release. This supersedes the earlier authorization for automatic protected merging/deployment.
+
+## Mesa-managed passwords — supersedes environment-only verification
+
+The user requested a temporary starting credential, required first replacement, database persistence and changes by the mesa. Each city's existing server environment password is imported only when its credential is absent. The mesa must choose a different password before accessing rooms or voting controls; subsequent verification uses only the stored salted scrypt hash. Normal changes require the current password and replacement confirmation and atomically revoke that city's old sessions. No participant identities, recovery email, managed auth or new service are introduced. Controlled operator recovery sets a new temporary credential and revokes sessions; it never silently reactivates the old environment password. See `mesa-passwords.md` for migration, recovery and concurrency details.
+
+Room-flow PR #4 has been merged upstream, so the password PR targets current `main`, rather than the former stacked room branch. This does not change the user's instruction: leave the password PR open and unmerged, include sanitized screenshots in its initial description, and do not deploy production.

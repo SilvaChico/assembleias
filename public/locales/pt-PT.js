@@ -1,5 +1,22 @@
 // Only catalogue shipped in this version. Future locales reuse these keys.
 export default {
+  password_setup_title: 'Escolhe a palavra-passe da mesa',
+  password_setup_hint: 'Esta palavra-passe é temporária. Escolhe uma nova para entrares na mesa.',
+  password_change_title: 'Alterar palavra-passe',
+  password_change_hint: 'As outras sessões desta mesa vão terminar. Esta fica aberta.',
+  password_current: 'Palavra-passe atual',
+  password_new: 'Nova palavra-passe',
+  password_confirmation: 'Repete a nova palavra-passe',
+  password_length_hint: 'Usa pelo menos 15 caracteres. Podes usar uma frase.',
+  password_length: 'Usa pelo menos 15 caracteres. Se a palavra-passe for muito longa, encurta-a.',
+  password_mismatch: 'As palavras-passe não coincidem. Repete a nova palavra-passe.',
+  password_must_differ: 'Escolhe uma palavra-passe diferente da atual.',
+  password_current_wrong: 'A palavra-passe atual está incorreta.',
+  password_setup_required: 'Escolhe primeiro uma nova palavra-passe para a mesa.',
+  password_changed_elsewhere: 'A palavra-passe mudou noutra sessão. Entra de novo.',
+  password_save: 'Guardar palavra-passe',
+  password_saved: 'Palavra-passe guardada. As outras sessões desta mesa terminaram.',
+
   entry_privacy: 'Não precisas de conta nem de indicar quem és.',
   privacy_stored: 'Guardamos propostas, apoios e totais dos votos. Não incluas nomes ou contactos nas propostas. Não usamos localização nem rastreadores.',
   privacy_ip: 'A aplicação não regista o teu endereço IP nem o envia para a base de dados.',
