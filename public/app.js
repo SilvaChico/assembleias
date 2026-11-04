@@ -104,7 +104,7 @@ async function refresh(force = false) {
     const contextChanged = nextRoom !== roomId;
     if (!contextChanged && incoming.assembly && incoming.assembly.revision < state.assembly.revision) return;
     const changed = force || loading || contextChanged || incoming.roomGranted !== state.roomGranted ||
-      incoming.assembly?.revision !== state.assembly.revision || nextAdmin.authenticated !== admin.authenticated;
+      incoming.assembly?.revision !== state.assembly.revision || nextAdmin.authenticated !== admin.authenticated || nextAdmin.setupRequired !== admin.setupRequired;
     const previousActive = active()?.id;
     state = { ...incoming, proposals: incoming.proposals || [], assembly: incoming.assembly || { revision: -1 } };
     admin = nextAdmin; roomId = nextRoom; loading = false;
@@ -130,7 +130,7 @@ function render(force = false) {
   $('#workspace').hidden = locked;
   $('#access-panel').hidden = !locked;
   $('#desk-notice').hidden = !isDesk();
-  $('#desk-notice').innerHTML = isDesk() ? `<strong>${t('mesa_de')} ${slug === 'lisboa' ? t('lisboa') : t('porto')}</strong><button class="text-button" type="button" data-action="logout">${t('terminar_sessao')}</button>` : '';
+  $('#desk-notice').innerHTML = isDesk() ? `<strong>${t('mesa_de')} ${slug === 'lisboa' ? t('lisboa') : t('porto')}</strong><div><button class="text-button" type="button" data-action="change-password">${t('password_change_title')}</button><button class="text-button" type="button" data-action="logout">${t('terminar_sessao')}</button></div>` : '';
   $('#room-context').hidden = locked;
   $('#room-context').innerHTML = locked ? '' : `<p>${escape(state.assembly.name)} · ${t('room_label')} <strong>${escape(state.room.code)}</strong></p>${isDesk() ? '' : `<button class="text-button" type="button" data-action="leave-room">${t('leave_room')}</button>`}`;
   $('#room-management').hidden = !isDesk();
@@ -140,10 +140,10 @@ function render(force = false) {
     $('#room-management').dataset.key = roomManagementKey;
     $('#room-management').innerHTML = `<div class="room-picker"><label for="desk-room-select">${t('room_label')}</label><select id="desk-room-select">${roomOptions}</select><button class="text-button" type="button" data-action="create-room">${t('create_room')}</button></div><p class="field-hint">${t('share_room_code')}</p>`;
   }
-  const nextAccessKey = `${view}:${slug}:${admin.configured}:${locked}`;
+  const nextAccessKey = `${view}:${slug}:${admin.configured}:${admin.setupRequired}:${locked}`;
   if (nextAccessKey !== accessKey) {
     accessKey = nextAccessKey;
-    $('#access-panel').innerHTML = locked ? (view === 'desk' ? loginForm() : roomForm()) : '';
+    $('#access-panel').innerHTML = locked ? (view === 'desk' ? (admin.setupRequired ? passwordForm(true) : loginForm()) : roomForm()) : '';
   }
   const proposals = state.proposals.filter(proposal => proposal.status !== 'open').sort((a, b) => a.id - b.id);
   $('#proposal-count').textContent = proposals.length;
@@ -166,6 +166,9 @@ function roomForm() {
 }
 function loginForm() {
   return `<form id="login-form" novalidate><input type="hidden" name="username" value="mesa"><label for="login-password">${t('palavra_passe_da_mesa')}</label><input id="login-password" name="password" type="password" autocomplete="current-password" required maxlength="1024" aria-describedby="login-error"><p id="login-error" class="form-error" role="alert"></p><button class="button primary full" type="submit" ${!admin.configured ? 'disabled' : ''}>${t('entrar_na_mesa')}</button></form>${!loading && !admin.configured ? `<p class="panel-note">${t('a_palavra_passe_desta_mesa')}</p>` : ''}`;
+}
+function passwordForm(setup = false) {
+  return `<h2 id="password-title">${t(setup ? 'password_setup_title' : 'password_change_title')}</h2><p class="field-hint">${t(setup ? 'password_setup_hint' : 'password_change_hint')}</p><form id="password-form" data-setup="${setup}" novalidate>${setup ? '' : `<label for="current-password">${t('password_current')}</label><input id="current-password" name="currentPassword" type="password" autocomplete="current-password" required maxlength="1024" aria-describedby="password-error">`}<label for="new-password">${t('password_new')}</label><input id="new-password" name="password" type="password" autocomplete="new-password" required minlength="15" maxlength="1024" aria-describedby="password-hint password-error"><p id="password-hint" class="field-hint">${t('password_length_hint')}</p><label for="confirm-password">${t('password_confirmation')}</label><input id="confirm-password" name="confirmation" type="password" autocomplete="new-password" required maxlength="1024" aria-describedby="password-error"><p id="password-error" class="form-error" role="alert"></p><div class="modal-actions">${setup ? '' : `<button class="button" type="button" data-action="dismiss">${t('cancelar')}</button>`}<button class="button primary" type="submit">${t('password_save')}</button></div></form>${setup ? `<button class="text-button" type="button" data-action="logout">${t('terminar_sessao')}</button>` : ''}`;
 }
 function renderVotingPanel() {
   const proposal = active();
@@ -205,6 +208,7 @@ document.addEventListener('click', async event => {
   try {
     if (action === 'dismiss') modal.close();
     if (action === 'new') showNewProposal();
+    if (action === 'change-password') { openModal(passwordForm().replace('id="password-title"', 'id="modal-title"')); $('#current-password').focus(); }
     if (action === 'about') showAbout();
     if (action === 'result') showResult(id);
     if (action === 'leave-room') {
@@ -253,7 +257,7 @@ document.addEventListener('submit', async event => {
   event.preventDefault();
   if (inFlight) return;
   const form = event.target, data = Object.fromEntries(new FormData(form));
-  const errors = { 'proposal-form': '#proposal-error', 'login-form': '#login-error', 'room-form': '#room-error', 'vote-form': '#vote-error', 'count-form': '#count-error' };
+  const errors = { 'password-form': '#password-error', 'proposal-form': '#proposal-error', 'login-form': '#login-error', 'room-form': '#room-error', 'vote-form': '#vote-error', 'count-form': '#count-error' };
   const errorTarget = $(errors[form.id]);
   if (!errorTarget) return;
   errorTarget.textContent = '';
@@ -267,10 +271,23 @@ document.addEventListener('submit', async event => {
       }
     }
   }
+  if (form.id === 'password-form') {
+    const invalid = [...data.password].length < 15 || new TextEncoder().encode(data.password).length > 1024;
+    if (invalid || data.password !== data.confirmation) {
+      errorTarget.textContent = t(invalid ? 'password_length' : 'password_mismatch');
+      const input = form.elements.namedItem(invalid ? 'password' : 'confirmation');
+      input.setAttribute('aria-invalid', 'true'); input.focus(); return;
+    }
+  }
   const submit = form.querySelector('button[type="submit"]');
   inFlight = true; submit.disabled = true;
   try {
-    if (form.id === 'login-form') { await post('/admin/login', data, true); form.elements.password.value = ''; await refresh(true); announce(t('sessao_da_mesa_iniciada_nesta')); $('#voting-title')?.focus(); }
+    if (form.id === 'login-form') { await post('/admin/login', data, true); form.elements.password.value = ''; await refresh(true); if (admin.setupRequired) $('#new-password')?.focus(); else { announce(t('sessao_da_mesa_iniciada_nesta')); $('#voting-title')?.focus(); } }
+    if (form.id === 'password-form') {
+      await post('/admin/password', data, true); form.reset();
+      if (modal.open) modal.close();
+      await refresh(true); $('#voting-title')?.focus(); announce(t('password_saved'));
+    }
     if (form.id === 'room-form') {
       await post('/enter', data); form.elements.code.value = '';
        await refresh(true); announce(t('entrada_na_sala_confirmada_o')); $('#voting-title')?.focus();
