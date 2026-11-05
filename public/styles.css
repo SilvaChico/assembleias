@@ -43,7 +43,7 @@ input[readonly]{background:var(--wash)}
 .text-button:hover{color:var(--ink)}
 .form-error{color:var(--error);font-weight:600;margin:8px 0;min-height:0}
 .form-error:empty{margin:0}
-#room-form button,#login-form button{margin-top:16px}
+#login-form button,#vote-entry-form button{margin-top:16px}
 #login-form label:not(:first-child){margin-top:16px}
 .eyebrow,.voting-reference{font-size:.82rem;font-weight:700;color:var(--muted);margin-bottom:8px}
 .voting-reference{font-weight:500}
@@ -119,10 +119,14 @@ dialog::backdrop{background:#172a20aa}
 .room-context{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px 16px;margin-bottom:16px}
 .room-context p{margin:0;font-size:.875rem}
 .room-context strong{overflow-wrap:anywhere}
-.room-picker{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px}
-.room-picker label{margin:0}
-.room-picker select{flex:1;min-width:150px;width:auto}
-#room-management{margin-bottom:16px}
+.vote-code-notice{margin-bottom:20px}
+.vote-code-notice p{margin-bottom:4px}
+#announced-vote-code{font-size:2rem;letter-spacing:.18em}
+#vote-code{font-size:1.5rem;letter-spacing:.18em;text-transform:uppercase}
+.proposal-picker{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px}
+.proposal-picker label{margin:0}
+.proposal-picker select{flex:1;min-width:150px;width:auto}
+#proposal-management{margin-bottom:16px}
 
 .desk-notice>div{display:flex;flex-wrap:wrap;gap:8px}
 #password-form input{margin-bottom:10px}

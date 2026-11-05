@@ -116,16 +116,17 @@ test('API: assembly-scoped chair access, room code, origin and private files', a
   assert.equal((await request(`/api/assemblies/lisboa/admin/proposals/${id}/open`, { body: {}, cookie: login.cookie, origin: 'http://other.invalid' })).status, 403);
   assert.equal((await request(`/api/assemblies/porto/admin/proposals/${id}/open`, { body: {}, cookie: login.cookie })).status, 401);
   assert.equal((await request(`/api/assemblies/lisboa/admin/proposals/${id}/open`, { body: {}, cookie: login.cookie })).status, 200);
-  assert.equal((await request('/api/rooms/proposals', { body: proposal })).status, 401);
+  assert.equal((await request('/api/rooms/proposals', { body: proposal })).status, 403);
   const enter = await request('/api/rooms/enter', { body: { code: 'sala-lisboa' } });
   const otherEnter = await request('/api/rooms/enter', { body: { code: 'sala-lisboa' } });
   assert.equal(enter.cookie, otherEnter.cookie); assert.match(enter.headers.get('set-cookie'), /HttpOnly/); assert.doesNotMatch(enter.headers.get('set-cookie'), /Max-Age/);
   assert.equal((await request('/api/assemblies/porto/proposals', { body: proposal, cookie: enter.cookie })).status, 404);
   const {category: _legacyCategory, ...withoutCategory} = proposal;
-  const submitted = await request('/api/rooms/proposals', { body: withoutCategory, cookie: enter.cookie }); assert.equal(submitted.status, 201);
-  const publicState = await request('/api/rooms/session', { cookie: enter.cookie }); assert.equal(publicState.data.proposals[0].digital, undefined); assert.equal(publicState.data.proposals.length, 2);
+  const submitted = await request('/api/assemblies/lisboa/admin/proposals', { body: withoutCategory, cookie: login.cookie }); assert.equal(submitted.status, 201);
+  const publicState = await request('/api/rooms/session', { cookie: enter.cookie }); assert.equal(publicState.data.proposals[0].digital, undefined); assert.equal(publicState.data.proposals.length, 1);
   assert.equal(publicState.data.proposals[0].category,'Espaço comum','Existing category data is preserved');
-  assert.equal(publicState.data.proposals[1].category,'','A new proposal needs no category');
+  const submittedState = await store.voteSnapshot(submitted.data.id);
+  assert.equal((await store.snapshot(submittedState.room.id)).proposals[0].category,'','A new proposal needs no category');
   assert.match(publicState.headers.get('content-security-policy'), /connect-src 'self'/);
   assert.equal(publicState.headers.get('permissions-policy'), 'geolocation=(), camera=(), microphone=()');
   assert.equal((await request('/mesa')).status, 200);
@@ -139,13 +140,14 @@ test('API: assembly-scoped chair access, room code, origin and private files', a
 test('API: concurrent submissions of one token count once; closure rejects later votes', async t => {
   const { store, request } = await fixture(t);
   const id = (await store.submit('lisboa', proposal)).id; (await store.open('lisboa', id));
-  const room = await request('/api/rooms/enter', { body: { code: 'sala-lisboa' } }); const receipt = token();
-  const responses = await Promise.all(Array.from({ length: 20 }, () => request(`/api/rooms/proposals/${id}/vote`, { cookie: room.cookie, body: { choice: 'favor', token: receipt } })));
+  const code = (await store.snapshot('lisboa', { admin: true })).proposals[0].voteCode;
+  const room = await request('/api/votes/enter', { body: { code } }); const receipt = token();
+  const responses = await Promise.all(Array.from({ length: 20 }, () => request(`/api/votes/proposals/${id}/vote`, { cookie: room.cookie, body: { choice: 'favor', token: receipt } })));
   assert.equal(responses.filter(item => item.data.alreadyRecorded === false).length, 1); assert.ok(responses.every(item => item.status === 200));
-  assert.equal((await request(`/api/rooms/proposals/${id}/vote-status`, { cookie: room.cookie, body: { token: receipt } })).data.recorded, true);
+  assert.equal((await request(`/api/votes/proposals/${id}/vote-status`, { cookie: room.cookie, body: { token: receipt } })).data.recorded, true);
   (await store.saveCounts('lisboa', id, { ...zeros, version: 0 })); (await store.closeVoting('lisboa', id, { version: 1 }));
   assert.equal((await store.snapshot('lisboa')).proposals[0].digital.favor, 1);
-  assert.equal((await request(`/api/rooms/proposals/${id}/vote`, { cookie: room.cookie, body: { choice: 'against', token: receipt } })).status, 409);
+  assert.equal((await request(`/api/votes/proposals/${id}/vote`, { cookie: room.cookie, body: { choice: 'against', token: receipt } })).status, 409);
 });
 
 test('missing passwords do not enable default access; expired sessions are rejected', async t => {
@@ -167,45 +169,21 @@ test('valid room entries are not capped by the shared failed-code limit', async 
 });
 
 
-test('room codes resolve globally and room/city boundaries protect every proposal action', async t => {
+test('mesa lists proposals across historical groups and never creates empty rooms', async t => {
   const { store, request } = await fixture(t);
   const temporary = await request('/api/assemblies/lisboa/admin/login', { body: { username: 'mesa', password: 'test-lisboa-password' } });
   const login = await request('/api/assemblies/lisboa/admin/password', { cookie: temporary.cookie, body: { password: 'chosen-lisboa-password', confirmation: 'chosen-lisboa-password' } });
-  assert.equal((await request('/api/assemblies/lisboa/admin/rooms', { body: {} })).status, 401);
-  const created = await request('/api/assemblies/lisboa/admin/rooms', { body: {}, cookie: login.cookie });
-  assert.equal(created.status, 201);
-  const firstRoom = created.data.room, secondRoom = await store.createRoom('lisboa'), portoRoom = await store.createRoom('porto');
-  assert.equal(new Set([firstRoom.code, secondRoom.code, portoRoom.code]).size, 3);
-  const enter = await request('/api/rooms/enter', { body: { code: `  ${firstRoom.code.toLowerCase()}  ` } });
-  assert.equal(enter.data.room.id, firstRoom.id);
-  const first = await request('/api/rooms/proposals', { body: proposal, cookie: enter.cookie });
-  assert.equal(first.status, 201);
-  const id = first.data.id;
-  const other = (await store.submit(secondRoom.id, proposal)).id, porto = (await store.submit(portoRoom.id, proposal)).id;
-  const waiting = (await store.submit(firstRoom.id, proposal)).id;
-  assert.equal((await request(`/api/assemblies/lisboa/admin/rooms/${firstRoom.id}/proposals/${id}/open`, { body: {}, cookie: login.cookie })).status, 200);
-  await store.open(secondRoom.id, other); await store.open(portoRoom.id, porto);
-  assert.equal((await request(`/api/assemblies/lisboa/admin/rooms/${firstRoom.id}/proposals/${waiting}/open`, { body: {}, cookie: login.cookie })).status, 409);
-  assert.equal((await request(`/api/assemblies/lisboa/admin/rooms/${portoRoom.id}/proposals`, { body: proposal, cookie: login.cookie })).status, 404);
-  assert.equal((await request(`/api/assemblies/lisboa/admin/session?room=${portoRoom.id}`, { cookie: login.cookie })).status, 404);
-  for (const action of ['support', 'vote', 'vote-status']) {
-    assert.equal((await request(`/api/rooms/proposals/${other}/${action}`, { body: { choice: 'favor', token: token() }, cookie: enter.cookie })).status, 404);
-  }
-  const participant = await request('/api/rooms/session', { cookie: enter.cookie });
-  assert.deepEqual(participant.data.proposals.map(item => item.id), [id, waiting]);
-  assert.equal(participant.data.assembly.slug, 'lisboa');
-  assert.equal(participant.data.rooms, undefined, 'Participants do not receive other room codes');
-  const mesa = await request(`/api/assemblies/lisboa/admin/session?room=${firstRoom.id}`, { cookie: login.cookie });
-  assert.equal(mesa.data.room.code, firstRoom.code);
-  assert.ok(mesa.data.rooms.every(room => room.assembly === 'lisboa'));
-  const anonymous = await request('/api/rooms/session');
-  assert.equal(anonymous.data.roomGranted, false); assert.equal(anonymous.data.proposals, undefined);
-  assert.equal((await request('/api/assemblies/lisboa')).status, 405, 'The legacy city read route cannot bypass room admission');
-  const tampered = enter.cookie.replace(firstRoom.id, secondRoom.id);
-  assert.equal((await request('/api/rooms/session', { cookie: tampered })).data.roomGranted, false);
-  await request('/api/rooms/leave', { cookie: enter.cookie, body: {} });
-  const reopen = await request('/api/rooms/enter', { body: { code: secondRoom.code } });
-  assert.deepEqual((await request('/api/rooms/session', { cookie: reopen.cookie })).data.proposals.map(item => item.id), [other]);
+  const first = await store.submit('lisboa', proposal), group = await store.createRoom('lisboa'), second = await store.submit(group.id, proposal);
+  const porto = await store.submit('porto', proposal);
+  const state = (await request('/api/assemblies/lisboa/admin/session', { cookie: login.cookie })).data;
+  assert.deepEqual(state.proposalOptions.map(item => item.id), [first.id, second.id]);
+  assert.deepEqual(state.proposals.map(item => item.id), [first.id]);
+  assert.equal(state.rooms, undefined); assert.equal(state.room, undefined);
+  const selected = (await request(`/api/assemblies/lisboa/admin/session?proposal=${second.id}`, { cookie: login.cookie })).data;
+  assert.deepEqual(selected.proposals.map(item => item.id), [second.id]);
+  assert.equal((await request(`/api/assemblies/lisboa/admin/session?proposal=${porto.id}`, { cookie: login.cookie })).status, 404);
+  assert.equal((await request('/api/assemblies/lisboa/admin/rooms', { cookie: login.cookie, body: {} })).status, 404);
+  for (const action of ['open', 'counts', 'close']) assert.equal((await request(`/api/assemblies/lisboa/admin/proposals/${porto.id}/${action}`, { cookie: login.cookie, body: {} })).status, 404);
 });
 
 test('ambiguous legacy codes fail closed and generated room codes remain stable across instances', async t => {

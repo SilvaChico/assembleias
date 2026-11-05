@@ -14,7 +14,7 @@ npx --no-install playwright install chromium
 npm run test:browser
 ```
 
-The browser test starts its own loopback server and in-memory SQLite database, creates fictional proposals and random test credentials, then shuts everything down. It covers participant and chair contexts, cross-tab repeats, refresh/retry after a lost response, reconnecting after closure, physical counts, combined results and city separation. The API suite also checks late votes, immutability, invalid counts, stale revisions, persistence and concurrent duplicate requests.
+The browser test rejects a non-empty `APP_URL` and starts its own loopback server and in-memory SQLite database, creates fictional proposals and random test credentials, then shuts everything down. It covers participant and chair contexts, mesa-only proposal creation, four-letter admission, code re-entry/cross-tab repeats, refresh reconciliation after a lost response, close during submission and reconnecting after closure, physical counts, combined results and city separation. The API suite also checks late votes, immutability, invalid counts, stale revisions, persistence and concurrent duplicate requests.
 
 GitHub Actions runs **Static checks**, **Data and API**, and **Browser flow** on every PR and on `main`. Each job uses `npm ci`, a pinned Node patch and GitHub Actions pinned by commit SHA. Workflow permissions are read-only and checkout does not retain authentication. CI has no application secrets, does not load `.env`, and refuses a non-empty `APP_URL` for browser tests. Only fictional test screenshots are uploaded on failure, for seven days; cookies, browser traces, databases and environment files are not artifacts.
 

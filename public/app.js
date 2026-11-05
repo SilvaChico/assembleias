@@ -9,19 +9,19 @@ const modal = $('#modal');
 let slug = new URLSearchParams(location.search).get('assembleia') === 'porto' ? 'porto' : 'lisboa';
 const view = /^\/mesa\/?$/.test(location.pathname) ? 'desk' : 'participant';
 if (location.hash === '#mesa') location.replace(`/mesa${location.search}`);
-let roomId = view === 'desk' ? new URLSearchParams(location.search).get('sala') : null;
-if (view === 'participant') $('.assembly-picker').remove();
+let roomId = null;
+let selectedProposalId = view === 'desk' ? new URLSearchParams(location.search).get('proposta') : null;
+if (view !== 'desk') $('.assembly-picker').remove();
 let state = { assembly: { name: t('assembleia_de_lisboa'), revision: -1 }, proposals: [], testMode: false };
 let admin = { authenticated: false, configured: false };
 let lastFocus, toastTimer, pollTimer, epoch = 0, panelKey = '', accessKey = '', dirtyCounts = false, sentVoteId = null;
-let loading = true, inFlight = false;
+let loading = true, inFlight = false, pendingRender = false;
 let browserStorageAvailable = true;
-const VOTE_TTL = 24 * 60 * 60 * 1000;
 const voteKey = (id, room = roomId) => `assembleias-voto-${room}-${id}`;
 function readVoteRecord(id, room = roomId) {
   try {
     const value = JSON.parse(localStorage.getItem(voteKey(id, room)) || 'null');
-    if (value && value.expires > Date.now() && /^[a-f0-9]{64}$/.test(value.token)) return value;
+    if (value && /^[a-f0-9]{64}$/.test(value.token)) return value;
     if (value) localStorage.removeItem(voteKey(id, room));
   } catch { browserStorageAvailable = false; }
   return null;
@@ -30,12 +30,13 @@ function cleanVoteRecords() {
   try {
     for (const key of Object.keys(localStorage).filter(key => key.startsWith('assembleias-voto-'))) {
       let value; try { value = JSON.parse(localStorage.getItem(key)); } catch {}
-      if (!value || value.expires <= Date.now() || (key.startsWith(`assembleias-voto-${roomId}-`) && key !== voteKey(active()?.id))) localStorage.removeItem(key);
+      // A receipt survives code re-entry and long open votes, until closure is observed.
+      if (!value || (state.proposals.some(proposal => key === voteKey(proposal.id) && proposal.status === 'closed'))) localStorage.removeItem(key);
     }
     const key = 'assembleias-storage-check'; localStorage.setItem(key, '1'); localStorage.removeItem(key);
   } catch { browserStorageAvailable = false; }
 }
-// Room entry uses the SAME session cookie for everyone in the room, without individual identities.
+// Admission cookies are shared; the per-proposal receipt is independent of entry.
 const find = id => state.proposals.find(proposal => proposal.id === Number(id));
 const active = () => state.proposals.find(proposal => proposal.status === 'open');
 const statusText = { waiting: t('por_discutir'), open: t('votacao_aberta'), closed: t('votacao_encerrada') };
@@ -47,14 +48,13 @@ async function api(route = '', { method = 'GET', body, admin: needsAdmin = false
   let response;
   let path;
   if (view === 'desk' || needsAdmin) {
-    const scoped = route.startsWith('/admin/proposals') ? route.replace('/admin/proposals', `/admin/rooms/${roomId}/proposals`) : route;
-    path = `/api/assemblies/${city}${scoped}`;
-  } else path = `/api/rooms${route || '/session'}`;
+    path = `/api/assemblies/${city}${route}`;
+  } else path = `/api/votes${route || '/session'}`;
   try { response = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), credentials: 'same-origin', signal: AbortSignal.timeout(10000) }); }
   catch { throw new Error(method === 'POST' ? t('a_confirmacao_nao_chegou_nao') : t('ligacao_ao_servidor_interrompida_os')); }
   const data = await response.json();
   if (!response.ok) {
-    if (response.status === 401 && !needsAdmin && route !== '/enter') state.roomGranted = false;
+    if (response.status === 401 && !needsAdmin && route !== '/enter') state.voteGranted = false;
     const error = new Error(data.error || t('nao_foi_possivel_concluir_o')); error.status = response.status; throw error;
   }
   return data;
@@ -67,7 +67,7 @@ async function sendBrowserVote(id, choice) {
     let record = readVoteRecord(id, room);
     if (!record) {
       const token = Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('');
-      record = { token, expires: Date.now() + VOTE_TTL, sent: false };
+      record = { token, sent: false };
       try { localStorage.setItem(voteKey(id, room), JSON.stringify(record)); } catch { throw new Error(t('nao_foi_possivel_guardar_o')); }
       // Best-effort coordination where Web Locks are unavailable, such as HTTP over a LAN.
       if (!navigator.locks) { await new Promise(resolve => setTimeout(resolve, 80)); record = readVoteRecord(id, room); }
@@ -96,24 +96,42 @@ async function refresh(force = false) {
   const currentEpoch = epoch;
   try {
     const incoming = view === 'desk'
-      ? await api(`/admin/session${roomId ? `?room=${encodeURIComponent(roomId)}` : ''}`, { admin: true })
+      ? await api(`/admin/session${selectedProposalId ? `?proposal=${encodeURIComponent(selectedProposalId)}` : ''}`, { admin: true })
       : await api();
     if (currentEpoch !== epoch) return;
     const nextAdmin = view === 'desk' ? incoming : admin;
     const nextRoom = incoming.room?.id || null;
-    const contextChanged = nextRoom !== roomId;
+    const nextProposal = incoming.selectedProposal ? String(incoming.selectedProposal) : null;
+    const contextChanged = view === 'desk' ? nextProposal !== selectedProposalId : nextRoom !== roomId;
     if (!contextChanged && incoming.assembly && incoming.assembly.revision < state.assembly.revision) return;
-    const changed = force || loading || contextChanged || incoming.roomGranted !== state.roomGranted ||
+    const changed = force || loading || pendingRender || contextChanged || incoming.voteGranted !== state.voteGranted ||
       incoming.assembly?.revision !== state.assembly.revision || nextAdmin.authenticated !== admin.authenticated || nextAdmin.setupRequired !== admin.setupRequired;
     const previousActive = active()?.id;
+    const previousStatus = state.proposals[0]?.status, previousSentVoteId = sentVoteId;
+    pendingRender = true;
     state = { ...incoming, proposals: incoming.proposals || [], assembly: incoming.assembly || { revision: -1 } };
-    admin = nextAdmin; roomId = nextRoom; loading = false;
+    admin = nextAdmin; roomId = nextRoom; if (view === 'desk') selectedProposalId = nextProposal; loading = false;
     if (contextChanged) { panelKey = ''; dirtyCounts = false; sentVoteId = null; if (modal.open) modal.close(); }
     cleanVoteRecords();
-    if (active() && readVoteRecord(active().id)?.sent) sentVoteId = active().id;
+    if (view === 'participant' && active()) {
+      const proposalId = active().id, record = readVoteRecord(proposalId);
+      if (record && !record.sent) {
+        try {
+          const status = await post(`/proposals/${proposalId}/vote-status`, { token: record.token });
+          if (currentEpoch !== epoch) return;
+          if (status.recorded) {
+            record.sent = true;
+            try { localStorage.setItem(voteKey(proposalId), JSON.stringify(record)); } catch { /* Retain the original token for retries. */ }
+          }
+        } catch (error) { if (error.status === 409) { await refresh(true); return; } throw error; }
+      }
+      if (record?.sent) sentVoteId = proposalId;
+    }
     if (sentVoteId && sentVoteId !== active()?.id) sentVoteId = null;
     $('#connection-notice').hidden = true;
-    if (changed) render(force);
+    if (changed || previousSentVoteId !== sentVoteId) render(force);
+    pendingRender = false;
+    if (view === 'participant' && previousStatus !== 'closed' && state.proposals[0]?.status === 'closed') $('#voting-title')?.focus();
     if (previousActive !== active()?.id) announce(active() ? t('a_mesa_abriu_a_votacao', { v0: active().title }) : t('a_votacao_foi_encerrada_consulte'));
   } catch (error) {
     if (currentEpoch !== epoch) return;
@@ -122,7 +140,7 @@ async function refresh(force = false) {
 }
 
 function render(force = false) {
-  const locked = view === 'desk' ? !admin.authenticated : !state.roomGranted;
+  const locked = view === 'desk' ? !admin.authenticated : !state.voteGranted;
   document.body.classList.toggle('entry-screen', locked);
   if ($('#assembly-select')) { $('#assembly-select').value = slug; $('.assembly-picker').hidden = false; }
   $('#desk-label').hidden = view !== 'desk';
@@ -131,26 +149,29 @@ function render(force = false) {
   $('#access-panel').hidden = !locked;
   $('#desk-notice').hidden = !isDesk();
   $('#desk-notice').innerHTML = isDesk() ? `<strong>${t('mesa_de')} ${slug === 'lisboa' ? t('lisboa') : t('porto')}</strong><div><button class="text-button" type="button" data-action="change-password">${t('password_change_title')}</button><button class="text-button" type="button" data-action="logout">${t('terminar_sessao')}</button></div>` : '';
-  $('#room-context').hidden = locked;
-  $('#room-context').innerHTML = locked ? '' : `<p>${escape(state.assembly.name)} · ${t('room_label')} <strong>${escape(state.room.code)}</strong></p>${isDesk() ? '' : `<button class="text-button" type="button" data-action="leave-room">${t('leave_room')}</button>`}`;
-  $('#room-management').hidden = !isDesk();
-  const roomOptions = (state.rooms || []).map(room => `<option value="${escape(room.id)}" ${room.id === roomId ? 'selected' : ''}>${room.id === room.assembly ? `${t('legacy_room')} · ` : ''}${escape(room.code)}</option>`).join('');
-  const roomManagementKey = `${slug}:${roomId}:${roomOptions}`;
-  if (isDesk() && $('#room-management').dataset.key !== roomManagementKey) {
-    $('#room-management').dataset.key = roomManagementKey;
-    $('#room-management').innerHTML = `<div class="room-picker"><label for="desk-room-select">${t('room_label')}</label><select id="desk-room-select">${roomOptions}</select><button class="text-button" type="button" data-action="create-room">${t('create_room')}</button></div><p class="field-hint">${t('share_room_code')}</p>`;
+  const code = view === 'participant' ? state.voteCode : state.proposals[0]?.voteCode;
+  $('#room-context').hidden = locked || !code;
+  $('#room-context').innerHTML = locked || !code ? '' : `<p>${escape(state.assembly.name)} · ${t('vote_code_label')} <strong>${escape(code)}</strong></p>`;
+  $('#proposal-management').hidden = !isDesk();
+  const options = (state.proposalOptions || []).map(proposal => `<option value="${proposal.id}" ${String(proposal.id) === selectedProposalId ? 'selected' : ''}>${escape(proposal.code)} · ${escape(proposal.title)}</option>`).join('');
+  const managementKey = `${slug}:${selectedProposalId}:${options}`;
+  if (isDesk() && $('#proposal-management').dataset.key !== managementKey) {
+    $('#proposal-management').dataset.key = managementKey;
+    $('#proposal-management').innerHTML = `<div class="proposal-picker"><label for="desk-proposal-select">${t('proposta')}</label><select id="desk-proposal-select" ${options ? '' : 'disabled'}>${options}</select><button class="text-button" type="button" data-action="new">${t('nova_proposta')}</button></div><p class="field-hint">${t('share_proposal_code')}</p>`;
   }
   const nextAccessKey = `${view}:${slug}:${admin.configured}:${admin.setupRequired}:${locked}`;
   if (nextAccessKey !== accessKey) {
     accessKey = nextAccessKey;
-    $('#access-panel').innerHTML = locked ? (view === 'desk' ? (admin.setupRequired ? passwordForm(true) : loginForm()) : roomForm()) : '';
+    $('#access-panel').innerHTML = locked ? (view === 'desk' ? (admin.setupRequired ? passwordForm(true) : loginForm()) : voteEntryForm()) : '';
   }
+  $('.proposals-section').hidden = view === 'participant' || Boolean(active());
+  $('#proposal-count').hidden = true;
   const proposals = state.proposals.filter(proposal => proposal.status !== 'open').sort((a, b) => a.id - b.id);
   $('#proposal-count').textContent = proposals.length;
-  $('#proposals-label').textContent = active() ? t('outras_propostas') : t('propostas');
+  $('#proposals-label').textContent = t('proposta');
   $('#proposals').innerHTML = locked ? '' : proposals.length ? proposals.map(proposal => `<article class="proposal-card" aria-labelledby="proposal-${proposal.id}"><div class="card-top"><span class="proposal-number">#${proposal.id}</span><span class="status ${proposal.status}">${statusText[proposal.status]}</span></div><div class="proposal-body"><h3 id="proposal-${proposal.id}">${escape(proposal.title)}</h3><p>${escape(proposal.description)}</p></div><div class="card-footer"><span class="support-count"><strong>${number(proposal.supports)}</strong> ${proposal.supports === 1 ? t('apoio_a_discussao') : t('apoios_a_discussao')}</span>${cardAction(proposal)}</div></article>`).join('') : active() ? '' : `<p class="notice">${t('esta_assembleia_ainda_nao_tem')}</p>`;
-  const proposal = active();
-  const nextKey = `${view}:${slug}:${roomId}:${locked}:${proposal?.id}:${sentVoteId}:${state.testMode}:${proposal?.countVersion}`;
+  const proposal = view === 'participant' ? state.proposals[0] : active();
+  const nextKey = `${view}:${slug}:${roomId}:${selectedProposalId}:${locked}:${proposal?.id}:${proposal?.status}:${proposal?.supports}:${sentVoteId}:${state.testMode}:${proposal?.countVersion}`;
   if (force || (nextKey !== panelKey && !(dirtyCounts && proposal?.id === Number($('#count-form')?.dataset.id) && isDesk()))) {
     panelKey = nextKey; dirtyCounts = false;
     if (locked) $('#voting-panel').replaceChildren(); else renderVotingPanel();
@@ -159,10 +180,10 @@ function render(force = false) {
 function cardAction(proposal) {
   if (proposal.status === 'closed') return `<button class="text-button" type="button" data-action="result" data-id="${proposal.id}">${t('ver_resultado')} <span class="sr-only"> ${t('de')} ${escape(proposal.title)}</span></button>`;
   if (isDesk()) return `<button class="button small" type="button" data-action="open" data-id="${proposal.id}" ${active() ? 'disabled' : ''}>${t('abrir_votacao')}<span class="sr-only"> ${t('de')} ${escape(proposal.title)}</span></button>`;
-  return `<button id="support-${proposal.id}" class="button small" type="button" data-action="support" data-id="${proposal.id}">${t('apoiar_discussao')}<span class="sr-only"> ${t('de')} ${escape(proposal.title)}</span></button>`;
+  return '';
 }
-function roomForm() {
-  return `<form id="room-form" novalidate><label for="room-code">${t('codigo_anunciado_nesta_sala')}</label><input id="room-code" name="code" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" required maxlength="128" aria-describedby="entry-privacy room-error"><p id="entry-privacy" class="field-hint">${t('entry_privacy')}</p><p class="form-error" id="room-error" role="alert"></p><button class="button primary full" type="submit">${t('entrar_na_sala')}</button></form>`;
+function voteEntryForm() {
+  return `<form id="vote-entry-form" novalidate><label for="vote-code">${t('vote_code_label')}</label><input id="vote-code" name="code" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" required minlength="4" maxlength="4" pattern="[A-Za-z]{4}" aria-describedby="vote-code-hint entry-privacy vote-entry-error"><p id="vote-code-hint" class="field-hint">${t('vote_code_hint')}</p><p id="entry-privacy" class="field-hint">${t('entry_privacy')}</p><p class="form-error" id="vote-entry-error" role="alert"></p><button class="button primary full" type="submit">${t('vote_enter')}</button></form>`;
 }
 function loginForm() {
   return `<form id="login-form" novalidate><input type="hidden" name="username" value="mesa"><label for="login-password">${t('palavra_passe_da_mesa')}</label><input id="login-password" name="password" type="password" autocomplete="current-password" required maxlength="1024" aria-describedby="login-error"><p id="login-error" class="form-error" role="alert"></p><button class="button primary full" type="submit" ${!admin.configured ? 'disabled' : ''}>${t('entrar_na_mesa')}</button></form>${!loading && !admin.configured ? `<p class="panel-note">${t('a_palavra_passe_desta_mesa')}</p>` : ''}`;
@@ -171,7 +192,16 @@ function passwordForm(setup = false) {
   return `<h2 id="password-title">${t(setup ? 'password_setup_title' : 'password_change_title')}</h2><p class="field-hint">${t(setup ? 'password_setup_hint' : 'password_change_hint')}</p><form id="password-form" data-setup="${setup}" novalidate>${setup ? '' : `<label for="current-password">${t('password_current')}</label><input id="current-password" name="currentPassword" type="password" autocomplete="current-password" required maxlength="1024" aria-describedby="password-error">`}<label for="new-password">${t('password_new')}</label><input id="new-password" name="password" type="password" autocomplete="new-password" required minlength="15" maxlength="1024" aria-describedby="password-hint password-error"><p id="password-hint" class="field-hint">${t('password_length_hint')}</p><label for="confirm-password">${t('password_confirmation')}</label><input id="confirm-password" name="confirmation" type="password" autocomplete="new-password" required maxlength="1024" aria-describedby="password-error"><p id="password-error" class="form-error" role="alert"></p><div class="modal-actions">${setup ? '' : `<button class="button" type="button" data-action="dismiss">${t('cancelar')}</button>`}<button class="button primary" type="submit">${t('password_save')}</button></div></form>${setup ? `<button class="text-button" type="button" data-action="logout">${t('terminar_sessao')}</button>` : ''}`;
 }
 function renderVotingPanel() {
-  const proposal = active();
+  const proposal = view === 'participant' ? state.proposals[0] : active();
+  if (view === 'participant' && proposal?.status === 'waiting') {
+    $('#voting-panel').innerHTML = `<div class="voting-panel"><p class="eyebrow">${t('por_discutir')}</p><h2 id="voting-title" tabindex="-1">${escape(proposal.title)}</h2><p class="voting-description">${escape(proposal.description)}</p><p>${t('proposal_waiting')}</p><p class="support-count">${number(proposal.supports)} ${proposal.supports === 1 ? t('apoio_a_discussao') : t('apoios_a_discussao')}</p><button class="button" type="button" data-action="support" data-id="${proposal.id}">${t('apoiar_discussao')}</button><p class="field-hint">${t('apoiar_e_pedir_discussao')}</p><button class="text-button" type="button" data-action="leave-vote">${t('vote_back_start')}</button></div>`;
+    return;
+  }
+  if (view === 'participant' && proposal?.status === 'closed') {
+    $('#voting-panel').innerHTML = `<div class="voting-panel"><h2 id="voting-title" tabindex="-1">${t('vote_closed_heading')}</h2>${resultContent(proposal)}<button class="button primary" type="button" data-action="leave-vote">${t('vote_back_start')}</button></div>`;
+    return;
+  }
+  if (!proposal && state.proposals.length) { $('#voting-panel').replaceChildren(); return; }
   if (!proposal) {
     $('#voting-panel').innerHTML = `<div class="voting-panel empty-vote"><h2 id="voting-title" tabindex="-1">${t('nao_ha_uma_votacao_aberta')}</h2></div>`;
     return;
@@ -179,26 +209,28 @@ function renderVotingPanel() {
   $('#voting-panel').innerHTML = `<div class="voting-panel active-vote"><p class="eyebrow">${t('votacao_aberta')}${state.testMode ? t('teste') : ''} · #${proposal.id}</p><h2 id="voting-title" tabindex="-1">${escape(proposal.title)}</h2><p class="voting-description">${escape(proposal.description)}</p>${isDesk() ? deskVote(proposal) : participantVote(proposal)}</div>`;
 }
 function participantVote(proposal) {
-  if (sentVoteId === proposal.id) return `<div class="vote-received"><h3>${t('voto_registado')}</h3><p>${t('aguarde_o_fecho_pela_mesa')}</p></div><p class="panel-note">${t('restricao_neste_navegador_durante_esta')}</p>`;
+  if (sentVoteId === proposal.id) return `<div class="vote-received"><h3>${t('voto_registado')}</h3><p>${t('aguarde_o_fecho_pela_mesa')}</p></div><p class="panel-note">${t('vote_receipt_hint')}</p>`;
   if (!browserStorageAvailable) return `<p class="panel-note">${t('o_armazenamento_local_do_navegador')}</p>`;
-  return `<form id="vote-form" data-id="${proposal.id}" novalidate><fieldset><legend>${t('qual_e_o_seu_voto')}?</legend>${choices.map(({ key, label }) => `<label class="vote-option"><input type="radio" name="vote" value="${key}" required><span class="vote-option-label">${label}</span></label>`).join('')}</fieldset><p class="form-error on-dark" id="vote-error" role="alert"></p><button class="button light full" type="submit">${t('registar_voto')} </button></form><p class="panel-note">${t('o_envio_guarda_um_codigo')}</p>`;
+  return `<form id="vote-form" data-id="${proposal.id}" novalidate><fieldset><legend>${t('qual_e_o_seu_voto')}?</legend>${choices.map(({ key, label }) => `<label class="vote-option"><input type="radio" name="vote" value="${key}" required><span class="vote-option-label">${label}</span></label>`).join('')}</fieldset><p class="form-error on-dark" id="vote-error" role="alert"></p><button class="button light full" type="submit">${t('registar_voto')} </button></form><p class="panel-note">${t('vote_receipt_hint')}</p>`;
 }
 function deskVote(proposal) {
-  return `<p class="panel-note">${t('os_totais_digitais_so_ficam')}</p><div class="counting-section"><h3>${t('contagem_presencial_publica')}</h3><p>${t('a_mesa_conta_os_cartoes')}</p><form id="count-form" data-id="${proposal.id}" data-version="${proposal.countVersion}" novalidate><fieldset><legend class="sr-only">${t('totais_de_votos_presenciais')}</legend>${choices.map(({ key, label }) => `<div class="count-field"><label for="count-${key}">${label}</label><input type="number" min="0" max="1000000" step="1" inputmode="numeric" id="count-${key}" name="${key}" value="${proposal.inPerson[key]}" required aria-describedby="count-hint count-error"></div>`).join('')}</fieldset><p class="panel-note" id="count-hint">${t('inteiros_de_0_a_1')}</p><p id="count-error" class="form-error on-dark" role="alert"></p><button class="button outline-light full" id="save-counts" type="submit">${proposal.inPersonRecorded ? t('atualizar_contagem') : t('guardar_contagem')}</button><p class="count-status" id="count-status" role="status">${proposal.inPersonRecorded ? t('contagem_guardada_votos_presenciais', { v0: number(countTotal(proposal.inPerson)) }) : t('contagem_por_confirmar_guarde_tambem')}</p><button class="text-button" type="button" data-action="reload-counts">${t('descartar_rascunho_e_reler_contagem')}</button></form></div><button class="button light full" type="button" data-action="close" data-id="${proposal.id}">${t('fechar_votacao_e_publicar')}</button><p class="panel-note">${t('a_publicacao_apresenta_a_contagem')}</p>`;
+  return `<div class="vote-code-notice"><p>${t('vote_code_label')}</p><strong id="announced-vote-code">${escape(proposal.voteCode)}</strong><p class="field-hint">${t('vote_share_code')}</p></div><p class="panel-note">${t('os_totais_digitais_so_ficam')}</p><div class="counting-section"><h3>${t('contagem_presencial_publica')}</h3><p>${t('a_mesa_conta_os_cartoes')}</p><form id="count-form" data-id="${proposal.id}" data-version="${proposal.countVersion}" novalidate><fieldset><legend class="sr-only">${t('totais_de_votos_presenciais')}</legend>${choices.map(({ key, label }) => `<div class="count-field"><label for="count-${key}">${label}</label><input type="number" min="0" max="1000000" step="1" inputmode="numeric" id="count-${key}" name="${key}" value="${proposal.inPerson[key]}" required aria-describedby="count-hint count-error"></div>`).join('')}</fieldset><p class="panel-note" id="count-hint">${t('inteiros_de_0_a_1')}</p><p id="count-error" class="form-error on-dark" role="alert"></p><button class="button outline-light full" id="save-counts" type="submit">${proposal.inPersonRecorded ? t('atualizar_contagem') : t('guardar_contagem')}</button><p class="count-status" id="count-status" role="status">${proposal.inPersonRecorded ? t('contagem_guardada_votos_presenciais', { v0: number(countTotal(proposal.inPerson)) }) : t('contagem_por_confirmar_guarde_tambem')}</p><button class="text-button" type="button" data-action="reload-counts">${t('descartar_rascunho_e_reler_contagem')}</button></form></div><button class="button light full" type="button" data-action="close" data-id="${proposal.id}">${t('fechar_votacao_e_publicar')}</button><p class="panel-note">${t('a_publicacao_apresenta_a_contagem')}</p>`;
 }
 function showNewProposal() {
-  if (!isDesk() && !state.roomGranted) { announce(t('entre_com_o_codigo_de')); $('#voting-title')?.focus(); return; }
-  openModal(`<p class="eyebrow">${t('uma_ideia_para')} ${t('room_label')} ${escape(state.room?.code || '')}</p><h2 id="modal-title">${t('nova_proposta')}</h2><p class="modal-intro">${t('escreva_o_que_propoe_e')}</p><form id="proposal-form" novalidate><label for="proposal-title">${t('titulo')} <span>${t('obrigatorio')}</span></label><input id="proposal-title" name="title" minlength="8" maxlength="120" required aria-describedby="title-hint proposal-error"><p class="field-hint" id="title-hint">${t('de_8_a_120_caracteres')}</p><label for="proposal-description">${t('descricao')} <span>${t('obrigatoria')}</span></label><textarea id="proposal-description" name="description" rows="4" minlength="20" maxlength="1200" required aria-describedby="description-hint proposal-error"></textarea><p class="field-hint" id="description-hint">${t('de_20_a_1200_caracteres')}</p><p id="proposal-error" class="form-error" role="alert"></p><div class="modal-actions"><button class="button" type="button" data-action="dismiss">${t('cancelar')}</button><button class="button primary" type="submit">${t('submeter_proposta')}</button></div></form>`);
+  if (!isDesk()) return;
+  openModal(`<p class="eyebrow">${escape(state.assembly.name)}</p><h2 id="modal-title">${t('nova_proposta')}</h2><p class="modal-intro">${t('escreva_o_que_propoe_e')}</p><form id="proposal-form" novalidate><label for="proposal-title">${t('titulo')} <span>${t('obrigatorio')}</span></label><input id="proposal-title" name="title" minlength="8" maxlength="120" required aria-describedby="title-hint proposal-error"><p class="field-hint" id="title-hint">${t('de_8_a_120_caracteres')}</p><label for="proposal-description">${t('descricao')} <span>${t('obrigatoria')}</span></label><textarea id="proposal-description" name="description" rows="4" minlength="20" maxlength="1200" required aria-describedby="description-hint proposal-error"></textarea><p class="field-hint" id="description-hint">${t('de_20_a_1200_caracteres')}</p><p id="proposal-error" class="form-error" role="alert"></p><div class="modal-actions"><button class="button" type="button" data-action="dismiss">${t('cancelar')}</button><button class="button primary" type="submit">${t('submeter_proposta')}</button></div></form>`);
+}
+function resultContent(proposal) {
+  const digital = countTotal(proposal.digital), inPerson = countTotal(proposal.inPerson);
+  return `<p class="result-proposal">${escape(proposal.title)}</p><div class="result-total"><strong>${number(digital + inPerson)}</strong><span>${t('votos_no_total')}</span></div><table class="results-table"><caption>${t('votos_por_opcao_e_via')}</caption><thead><tr><th scope="col">${t('opcao')}</th><th scope="col">${t('digital')}</th><th scope="col">${t('presencial')}</th><th scope="col">${t('total')}</th></tr></thead><tbody>${choices.map(({ key, label }) => `<tr><th scope="row">${label}</th><td>${number(proposal.digital[key])}</td><td>${number(proposal.inPerson[key])}</td><td><strong>${number(proposal.digital[key] + proposal.inPerson[key])}</strong></td></tr>`).join('')}</tbody><tfoot><tr><th scope="row">${t('total')}</th><td>${number(digital)}</td><td>${number(inPerson)}</td><td>${number(digital + inPerson)}</td></tr></tfoot></table><p class="field-hint">${t('a_mesa_introduz_a_contagem')}</p><div class="notice">${t('esta_contagem_nao_determina_aprovacao')}</div>`;
 }
 function showResult(id) {
   const proposal = find(id);
   if (proposal?.status !== 'closed') return;
-  const digital = countTotal(proposal.digital), inPerson = countTotal(proposal.inPerson);
-  openModal(`<p class="eyebrow">${t('votacao_encerrada')}${state.testMode ? t('dados_ficticios') : ''}</p><h2 id="modal-title">${t('resultado_da_contagem')}</h2><p class="result-proposal">${escape(proposal.title)}</p><div class="result-total"><strong>${number(digital + inPerson)}</strong><span>${t('votos_no_total')}</span></div><table class="results-table"><caption>${t('votos_por_opcao_e_via')}</caption><thead><tr><th scope="col">${t('opcao')}</th><th scope="col">${t('digital')}</th><th scope="col">${t('presencial')}</th><th scope="col">${t('total')}</th></tr></thead><tbody>${choices.map(({ key, label }) => `<tr><th scope="row">${label}</th><td>${number(proposal.digital[key])}</td><td>${number(proposal.inPerson[key])}</td><td><strong>${number(proposal.digital[key] + proposal.inPerson[key])}</strong></td></tr>`).join('')}</tbody><tfoot><tr><th scope="row">${t('total')}</th><td>${number(digital)}</td><td>${number(inPerson)}</td><td>${number(digital + inPerson)}</td></tr></tfoot></table><p class="field-hint">${t('a_mesa_introduz_a_contagem')}</p><div class="notice">${t('esta_contagem_nao_determina_aprovacao')}</div><div class="modal-actions"><button class="button primary" type="button" data-action="dismiss">${t('voltar_as_propostas')}</button></div>`);
+  openModal(`<p class="eyebrow">${t('votacao_encerrada')}${state.testMode ? t('dados_ficticios') : ''}</p><h2 id="modal-title">${t('resultado_da_contagem')}</h2>${resultContent(proposal)}<div class="modal-actions"><button class="button primary" type="button" data-action="dismiss">${t('voltar_as_propostas')}</button></div>`);
 }
 function showAbout() {
-  const hosted = state.hosted || location.hostname.endsWith('.vercel.app');
-  openModal(`<h2 id="modal-title">${t('privacidade_e_limites')}</h2><div class="about-copy"><p>${t('privacy_stored')}</p><p>${t('privacy_ip')}</p>${hosted ? `<p>${t('hosting_notice')}</p>` : ''}<p>${t('privacy_room')}</p><p>${t('privacy_repeat')}</p><p class="notice">${t('esta_versao_ainda_nao_esta')}</p></div><div class="modal-actions"><button class="button primary" type="button" data-action="dismiss">${t('fechar')}</button></div>`);
+  openModal(`<h2 id="modal-title">${t('privacidade_e_limites')}</h2><div class="about-copy"><p>${t('privacy_stored')}</p><p>${t('privacy_ip')}</p><p>${t('privacy_room')}</p><p>${t('privacy_repeat')}</p><p class="notice">${t('esta_versao_ainda_nao_esta')}</p></div><div class="modal-actions"><button class="button primary" type="button" data-action="dismiss">${t('fechar')}</button></div>`);
 }
 
 document.addEventListener('click', async event => {
@@ -207,24 +239,17 @@ document.addEventListener('click', async event => {
   const { action, id } = button.dataset;
   try {
     if (action === 'dismiss') modal.close();
-    if (action === 'new') showNewProposal();
+    if (action === 'new') { if (dirtyCounts && !confirm(t('switch_proposal_discard_counts'))) return; showNewProposal(); }
     if (action === 'change-password') { openModal(passwordForm().replace('id="password-title"', 'id="modal-title"')); $('#current-password').focus(); }
     if (action === 'about') showAbout();
     if (action === 'result') showResult(id);
-    if (action === 'leave-room') {
-      inFlight = true; await post('/leave'); await refresh(true); $('#room-code')?.focus();
-    }
-    if (action === 'create-room') {
-      if (dirtyCounts && !confirm(t('switch_room_discard_counts'))) return;
-      inFlight = true;
-      const result = await post('/admin/rooms', {}, true);
-      roomId = result.room.id; await changeContext(); announce(t('room_created'));
+    if (action === 'leave-vote') {
+      inFlight = true; await post('/leave'); epoch++; await refresh(true); $('#vote-code')?.focus();
     }
     if (action === 'support') {
-      if (!state.roomGranted) { announce(t('entre_com_o_codigo_de_2')); $('#voting-title')?.focus(); return; }
       inFlight = true; button.disabled = true;
-      await post(`/proposals/${id}/support`); await refresh();
-      document.getElementById(`support-${id}`)?.focus(); announce(t('apoio_a_discussao_acrescentado_nao'));
+      await post(`/proposals/${id}/support`); await refresh(true);
+      $('#voting-title')?.focus(); announce(t('apoio_a_discussao_acrescentado_nao'));
     }
     if (action === 'reload-counts') { if (dirtyCounts && !confirm(t('descartar_as_alteracoes_por_guardar'))) return; dirtyCounts = false; await refresh(true); }
     if (action === 'logout') { inFlight = true; await post('/admin/logout', {}, true); admin.authenticated = false; await refresh(true); $('#login-password')?.focus(); announce(t('sessao_da_mesa_terminada')); }
@@ -257,11 +282,14 @@ document.addEventListener('submit', async event => {
   event.preventDefault();
   if (inFlight) return;
   const form = event.target, data = Object.fromEntries(new FormData(form));
-  const errors = { 'password-form': '#password-error', 'proposal-form': '#proposal-error', 'login-form': '#login-error', 'room-form': '#room-error', 'vote-form': '#vote-error', 'count-form': '#count-error' };
+  const errors = { 'vote-entry-form': '#vote-entry-error', 'password-form': '#password-error', 'proposal-form': '#proposal-error', 'login-form': '#login-error', 'vote-form': '#vote-error', 'count-form': '#count-error' };
   const errorTarget = $(errors[form.id]);
   if (!errorTarget) return;
   errorTarget.textContent = '';
   form.querySelectorAll('[aria-invalid]').forEach(input => input.removeAttribute('aria-invalid'));
+  if (form.id === 'vote-entry-form' && !/^[a-zA-Z]{4}$/.test(data.code.trim())) {
+    errorTarget.textContent = t('vote_code_incorrect'); form.elements.code.setAttribute('aria-invalid', 'true'); form.elements.code.focus(); return;
+  }
   if (form.id === 'proposal-form') {
     for (const name of ['title', 'description']) {
       const input = form.elements.namedItem(name);
@@ -288,13 +316,13 @@ document.addEventListener('submit', async event => {
       if (modal.open) modal.close();
       await refresh(true); $('#voting-title')?.focus(); announce(t('password_saved'));
     }
-    if (form.id === 'room-form') {
-      await post('/enter', data); form.elements.code.value = '';
-       await refresh(true); announce(t('entrada_na_sala_confirmada_o')); $('#voting-title')?.focus();
+    if (form.id === 'vote-entry-form') {
+      await post('/enter', data); form.elements.code.value = ''; epoch++;
+      await refresh(true); $('#voting-title')?.focus();
     }
     if (form.id === 'proposal-form') {
-      const result = await post(isDesk() ? '/admin/proposals' : '/proposals', data, isDesk());
-      modal.close(); await refresh(); const heading = document.getElementById(`proposal-${result.id}`); heading?.setAttribute('tabindex', '-1'); heading?.focus(); announce(t('proposta_submetida_ja_pode_receber'));
+      const result = await post('/admin/proposals', data, true);
+      modal.close(); selectedProposalId = String(result.id); await changeContext(); const heading = document.getElementById(`proposal-${result.id}`); heading?.setAttribute('tabindex', '-1'); heading?.focus(); announce(t('proposta_submetida_ja_pode_receber'));
     }
     if (form.id === 'vote-form') {
       const votingId = Number(form.dataset.id), votingEpoch = epoch;
@@ -308,6 +336,7 @@ document.addEventListener('submit', async event => {
     }
   } catch (error) {
     errorTarget.textContent = error.message;
+    if (form.id === 'vote-form' && error.status === 409) await refresh(true);
     if (form.id === 'count-form') {
       const input = [...form.querySelectorAll('input')].find(input => !input.validity.valid || !/^(0|[1-9]\d*)$/.test(input.value));
       input?.setAttribute('aria-invalid', 'true'); input?.focus();
@@ -319,7 +348,8 @@ document.addEventListener('input', event => { if (event.target.closest('#count-f
 async function changeContext() {
   if (view === 'desk') {
     const url = new URL(location.href);
-    if (roomId) url.searchParams.set('sala', roomId); else url.searchParams.delete('sala');
+    url.searchParams.delete('sala');
+    if (selectedProposalId) url.searchParams.set('proposta', selectedProposalId); else url.searchParams.delete('proposta');
     history.replaceState(null, '', url);
   }
   epoch++; panelKey = ''; dirtyCounts = false; sentVoteId = null; loading = true;
@@ -328,12 +358,12 @@ async function changeContext() {
 }
 $('#assembly-select')?.addEventListener('change', async event => {
   if (dirtyCounts && !confirm(t('mudar_de_assembleia_e_descartar'))) { event.target.value = slug; return; }
-  slug = event.target.value; roomId = null; const url = new URL(location.href); url.searchParams.set('assembleia', slug); url.searchParams.delete('sala'); history.replaceState(null, '', url); await changeContext();
+  slug = event.target.value; roomId = null; selectedProposalId = null; const url = new URL(location.href); url.searchParams.set('assembleia', slug); url.searchParams.delete('sala'); url.searchParams.delete('proposta'); history.replaceState(null, '', url); await changeContext();
 });
 document.addEventListener('change', async event => {
-  if (event.target.id !== 'desk-room-select') return;
-  if (dirtyCounts && !confirm(t('switch_room_discard_counts'))) { event.target.value = roomId; return; }
-  roomId = event.target.value; await changeContext();
+  if (event.target.id !== 'desk-proposal-select') return;
+  if (dirtyCounts && !confirm(t('switch_proposal_discard_counts'))) { event.target.value = selectedProposalId; return; }
+  selectedProposalId = event.target.value; await changeContext();
 });
 window.addEventListener('beforeunload', event => { if (dirtyCounts) { event.preventDefault(); event.returnValue = ''; } });
 window.addEventListener('storage', event => { if (event.key?.startsWith(`assembleias-voto-${roomId}-`)) { if (active() && readVoteRecord(active().id)?.sent) sentVoteId = active().id; render(); } });
