@@ -22,7 +22,13 @@ export default async function handler(request, response) {
     applicationPromise ||= application();
     const app = await applicationPromise;
     const route = request.query?.route;
-    if (route) request.url = `/api/${Array.isArray(route) ? route.join('/') : route}`;
+    if (route) {
+      // Keep proposal selection and other query parameters when undoing the rewrite.
+      const url = new URL(request.url, 'http://localhost');
+      url.pathname = `/api/${Array.isArray(route) ? route.join('/') : route}`;
+      url.searchParams.delete('route');
+      request.url = `${url.pathname}${url.search}`;
+    }
     await app.handler(request,response);
   } catch(error) {
     applicationPromise = undefined;

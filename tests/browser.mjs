@@ -2,15 +2,19 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import { mkdir } from 'node:fs/promises';
-import { createApplication } from '../server.mjs';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createHostedServer } from './helpers/hosted-server.mjs';
 import { createStore } from '../lib/store.mjs';
 
 if (process.env.APP_URL) throw new Error('Browser tests must use isolated local fixtures, not APP_URL.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ? pathToFileURL(process.env.PLAYWRIGHT_MODULE).href : 'playwright');
 const origin = 'http://127.0.0.1:4186', password = randomBytes(24).toString('hex');
-const store = await createStore();
-const { server } = await createApplication({ store, origin, testMode: true, passwords: { lisboa: password, porto: randomBytes(24).toString('hex') } });
+const fixtureDirectory = await mkdtemp(join(tmpdir(), 'assembleias-browser-'));
+const filename = join(fixtureDirectory, 'local.sqlite');
+const store = await createStore(filename);
+const server = await createHostedServer({ filename, origin, passwords: { lisboa: password, porto: randomBytes(24).toString('hex') } });
 await new Promise((resolve, reject) => { server.once('error', reject); server.listen(4186, '127.0.0.1', resolve); });
 let browser;
 try {
@@ -212,12 +216,19 @@ try {
   await newProposal(chair, 'Mais sombra no espaço da acampada');
   const secondProposal = await chair.locator('#desk-proposal-select').inputValue(); assert.notEqual(secondProposal, proposalId);
   assert.equal(await chair.getByRole('heading', { name: title, exact: true }).count(), 0);
+  const openingControl = card(chair, 'Mais sombra no espaço da acampada').getByRole('button', { name: /Abre votação/ });
+  assert.equal(await openingControl.isVisible(), true, 'A newly created proposal exposes its opening action through the hosted adapter');
+  assert.equal(await openingControl.isEnabled(), true);
+  await screenshot(chair, 'hosted-new-proposal-open');
+  await open('Mais sombra no espaço da acampada');
+  await close();
+  await chair.getByRole('button', { name: 'Volta às propostas', exact: true }).click();
   await chair.locator('#desk-proposal-select').selectOption(proposalId); await card(chair, title).waitFor();
   await chair.setViewportSize({ width: 375, height: 812 });
   assert.equal(await chair.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'Mesa proposal selection fits mobile');
   await chair.locator('#assembly-select').selectOption('porto'); await chair.locator('#login-form').waitFor(); assert.equal(await chair.locator('#desk-proposal-select').isVisible(), false);
   assert.deepEqual(errors, []); assert.deepEqual(external, []);
-  console.log('Local browser flow passed: password setup/change, mesa-only proposal creation, four-character proposal entry before voting, focused voting, concurrent tabs, code re-entry, refresh/lost response recovery, close-during-submit, reconnect after closure, final combined totals, proposal/city boundaries and accessibility.');
+  console.log('Local browser flow through the hosted adapter passed: password setup/change, mesa-only proposal creation, new proposal opening/closure, four-character proposal entry before voting, focused voting, concurrent tabs, code re-entry, refresh/lost response recovery, close-during-submit, reconnect after closure, final combined totals, proposal/city boundaries and accessibility.');
 } catch (error) {
   for (const [i, context] of browser?.contexts().entries() || []) for (const [j, page] of context.pages().entries()) {
     console.error(`Context ${i}, page ${j}:`, await page.evaluate(() => ({ action: document.querySelector('#action-error')?.textContent, connection: document.querySelector('#connection-notice')?.textContent })));
@@ -226,4 +237,5 @@ try {
   throw error;
 } finally {
   await browser?.close(); await new Promise(resolve => server.close(resolve)); await store.close();
+  await rm(fixtureDirectory, { recursive: true, force: true });
 }
